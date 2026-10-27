@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
 import {
   Upload,
   Play,
@@ -16,6 +17,7 @@ import {
   Plus,
   Sparkles,
   ArrowLeft,
+  KeyRound,
   FileMusic,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,256 +26,170 @@ export const Route = createFileRoute("/leitor")({
   component: LeitorRoute,
 });
 
-interface DetectedNote {
+interface NoteEvent {
   noteName: string;
   frequency: number;
   durationBeats: number;
-  xPercent: number; // Posição X calculada na imagem
-  isRest: boolean;  // Pausa musical
+  xPercent: number;
+  isRest: boolean;
 }
 
-interface DetectedStaff {
+interface StaffSystem {
   id: number;
   topPercent: number;
   heightPercent: number;
-  notes: DetectedNote[];
+  notes: NoteEvent[];
 }
 
 function LeitorRoute() {
   const navigate = useNavigate();
 
-  // Estados de Imagem e Processamento
+  // Estados de Imagem e API
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [scoreTitle, setScoreTitle] = useState<string>("Nenhuma partitura carregada");
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("GEMINI_API_KEY") || "");
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [scoreTitle, setScoreTitle] = useState("Leitor Inteligente OMR");
 
-  // Estrutura dinâmica obtida da leitura da imagem
-  const [detectedStaffs, setDetectedStaffs] = useState<DetectedStaff[]>([]);
-  const [currentStaffIndex, setCurrentStaffIndex] = useState(0);
+  // Estrutura de Pentagramas da Partitura
+  const [systems, setSystems] = useState<StaffSystem[]>([]);
+  const [currentSystemIndex, setCurrentSystemIndex] = useState(0);
   const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
 
-  // Estados de Reprodução
+  // Estados de Reprodução & Metrônomo
   const [isPlaying, setIsPlaying] = useState(false);
-  const [bpm, setBpm] = useState(72);
+  const [bpm, setBpm] = useState(90);
   const [transposeSemi, setTransposeSemi] = useState(0);
   const [volume, setVolume] = useState(85);
   const [isMuted, setIsMuted] = useState(false);
   const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("sax");
   const [showMixer, setShowMixer] = useState(false);
 
-  // Cursor visual
+  // Posição da linha vermelha de leitura
   const [cursorX, setCursorX] = useState(15);
   const [currentBeat, setCurrentBeat] = useState(0);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimerRef = useRef<any>(null);
 
-  // Mapeamento de Frequências Base
-  const baseFrequencies: Record<string, number> = {
+  // Tabela de frequências padrão
+  const pitchMap: Record<string, number> = {
     "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "F#3": 185.00, "G3": 196.00, "A3": 220.00, "B3": 246.94,
-    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "D#4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99, "G4": 392.00, "G#4": 415.30, "A4": 440.00, "A#4": 466.16, "B4": 493.88,
-    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "D#5": 622.25, "E5": 659.25, "F5": 698.46, "F#5": 739.99, "G5": 783.99, "G#5": 830.61, "A5": 880.00, "B5": 987.77,
+    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "D#4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99, "G4": 392.00, "G#4": 415.30, "A4": 440.00, "Bb4": 466.16, "B4": 493.88,
+    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "Eb5": 622.25, "E5": 659.25, "F5": 698.46, "F#5": 739.99, "G5": 783.99, "G#5": 830.61, "A5": 880.00, "Bb5": 932.33, "B5": 987.77,
     "C6": 1046.50,
   };
 
+  const handleSaveApiKey = (val: string) => {
+    setApiKey(val);
+    localStorage.setItem("GEMINI_API_KEY", val);
+    setShowKeyModal(false);
+    toast.success("Chave de API salva com sucesso!");
+  };
+
   // =========================================================================
-  // MOTOR DE LEITURA ÓTICA DE PARTITURA (OMR) BASEADO EM PIXELS DO CANVAS
+  // RECONHECIMENTO VIA API DE VISÃO MULTIMODAL
   // =========================================================================
-  const processImageOMR = (imageSrc: string, fileName?: string) => {
+  const analyzeWithVisionAI = async (base64Image: string) => {
+    if (!apiKey) {
+      setShowKeyModal(true);
+      toast.info("Insira sua chave de API para o reconhecimento inteligente.");
+      return;
+    }
+
     setIsProcessing(true);
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = imageSrc;
+    const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+    const promptText = `
+Você é um motor especialista em OMR (Optical Music Recognition) e transcrição musical de partituras.
+Analise a partitura na imagem enviada com total precisão:
+1. Identifique o Título da obra, Instrumento, Tonalidade, Armadura de Clave e Fórmula de Compasso.
+2. Identifique todos os pentagramas (sistemas) presentes do topo à base da folha.
+3. Para cada pentagrama, meça verticalmente sua posição:
+   - topPercent (porcentagem de 0 a 100 indicando onde o pentagrama começa no topo da folha)
+   - heightPercent (porcentagem de 0 a 100 da altura ocupada pelo pentagrama)
+4. Transcreva a sequência exata de notas e pausas de cada pentagrama:
+   - noteName: ex "G4", "F#4", "Bb4", "D5", "Pausa"
+   - frequency: frequência em Hertz correspondente à nota afinada (ou 0 se for pausa)
+   - durationBeats: duração em tempos (1.0 para semínima, 0.5 para colcheia, 0.25 para semicolcheia, 2.0 para mínima)
+   - xPercent: posição horizontal (0 a 100%) da nota ao longo da largura da folha
+   - isRest: true se for pausa musical, false se for nota tocada
 
-        // Redimensiona para resolução padrão de análise sem perder detalhe de linhas
-        const targetWidth = 1000;
-        const targetHeight = Math.round((img.height / img.width) * targetWidth);
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
+Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este formato:
+{
+  "title": "Nome da Obra",
+  "bpm": 80,
+  "systems": [
+    {
+      "id": 1,
+      "topPercent": 14.5,
+      "heightPercent": 7.0,
+      "notes": [
+        { "noteName": "G4", "frequency": 392.0, "durationBeats": 1.0, "xPercent": 25, "isRest": false }
+      ]
+    }
+  ]
+}
+`;
 
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight).data;
-
-        // 1. Projeção Horizontal: Identificar picos escuros para achar as linhas do pentagrama
-        const horizontalDensity: number[] = new Array(targetHeight).fill(0);
-        for (let y = 0; y < targetHeight; y++) {
-          let darkCount = 0;
-          for (let x = 100; x < targetWidth - 100; x++) {
-            const idx = (y * targetWidth + x) * 4;
-            const gray = (imgData[idx] + imgData[idx + 1] + imgData[idx + 2]) / 3;
-            if (gray < 110) darkCount++;
-          }
-          horizontalDensity[y] = darkCount;
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: promptText },
+                  {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: cleanBase64,
+                    },
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              responseMimeType: "application/json",
+            },
+          }),
         }
+      );
 
-        // 2. Agrupamento de linhas em Pentagramas (5 linhas por grupo)
-        const staffGroups: { top: number; bottom: number }[] = [];
-        let inStaff = false;
-        let staffStart = 0;
-        let consecutiveHits = 0;
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        const threshold = targetWidth * 0.22; // Limiar de linha contínua
-
-        for (let y = 50; y < targetHeight - 50; y++) {
-          if (horizontalDensity[y] > threshold) {
-            consecutiveHits++;
-            if (!inStaff && consecutiveHits >= 2) {
-              inStaff = true;
-              staffStart = y - 2;
-            }
-          } else {
-            if (inStaff && y - staffStart > 18) {
-              staffGroups.push({ top: staffStart, bottom: y });
-              inStaff = false;
-              consecutiveHits = 0;
-            }
-          }
-        }
-
-        // Fusão de linhas próximas para formar os sistemas completos
-        const mergedSystems: { topPercent: number; heightPercent: number }[] = [];
-        let tempTop = 0;
-        let tempBottom = 0;
-        let lineCount = 0;
-
-        for (let i = 0; i < staffGroups.length; i++) {
-          if (lineCount === 0) {
-            tempTop = staffGroups[i].top;
-          }
-          tempBottom = staffGroups[i].bottom;
-          lineCount++;
-
-          // A cada conjunto de linhas ou espaçamento significativo, fecha o pentagrama
-          const next = staffGroups[i + 1];
-          if (!next || (next.top - tempBottom) > 35 || lineCount >= 5) {
-            const padTop = Math.max(0, tempTop - 15);
-            const padHeight = Math.min(targetHeight, (tempBottom - tempTop) + 30);
-            mergedSystems.push({
-              topPercent: (padTop / targetHeight) * 100,
-              heightPercent: (padHeight / targetHeight) * 100,
-            });
-            lineCount = 0;
-          }
-        }
-
-        // Se a imagem for muito limpa ou digitalizada com traço fino, garante os sistemas reais
-        const totalFound = mergedSystems.length >= 3 ? mergedSystems.length : 7;
-        const finalSystemsList: DetectedStaff[] = [];
-
-        // 3. Extração das Notas dentro de cada Pentagrama detectado
-        for (let s = 0; s < totalFound; s++) {
-          const sysBounds = mergedSystems[s] || {
-            topPercent: 12 + s * 11.8,
-            heightPercent: 7.2,
-          };
-
-          const startY = Math.round((sysBounds.topPercent / 100) * targetHeight);
-          const endY = Math.round(((sysBounds.topPercent + sysBounds.heightPercent) / 100) * targetHeight);
-
-          // Varredura de colunas verticais à procura de massas pretas (cabeças de nota)
-          const notesInThisStaff: DetectedNote[] = [];
-          const stepX = 14; // Resolução horizontal de escaneamento
-
-          for (let x = 120; x < targetWidth - 60; x += stepX) {
-            let columnMass = 0;
-            let sumY = 0;
-
-            for (let y = startY; y < endY; y++) {
-              const idx = (y * targetWidth + x) * 4;
-              const gray = (imgData[idx] + imgData[idx + 1] + imgData[idx + 2]) / 3;
-              if (gray < 90) {
-                columnMass++;
-                sumY += y;
-              }
-            }
-
-            // Cabeça de nota identificada pela densidade vertical
-            if (columnMass >= 8 && columnMass <= 38) {
-              const avgY = sumY / columnMass;
-              const relativeHeight = (avgY - startY) / (endY - startY); // 0 (topo) a 1 (base)
-
-              // Mapeamento de Altura da Pauta (Clave de Sol / Sax Alto)
-              let noteName = "G4";
-              let freq = baseFrequencies["G4"];
-
-              if (relativeHeight < 0.22) { noteName = "E5"; freq = baseFrequencies["E5"]; }
-              else if (relativeHeight < 0.35) { noteName = "D5"; freq = baseFrequencies["D5"]; }
-              else if (relativeHeight < 0.48) { noteName = "C5"; freq = baseFrequencies["C5"]; }
-              else if (relativeHeight < 0.60) { noteName = "B4"; freq = baseFrequencies["B4"]; }
-              else if (relativeHeight < 0.72) { noteName = "A4"; freq = baseFrequencies["A4"]; }
-              else if (relativeHeight < 0.85) { noteName = "G4"; freq = baseFrequencies["G4"]; }
-              else { noteName = "F#4"; freq = baseFrequencies["F#4"]; }
-
-              notesInThisStaff.push({
-                noteName,
-                frequency: freq,
-                durationBeats: columnMass > 22 ? 1.0 : 0.5,
-                xPercent: (x / targetWidth) * 100,
-                isRest: false,
-              });
-
-              x += 18; // Pula a largura da nota recém-detectada
-            } else if (columnMass === 0 && notesInThisStaff.length > 0 && Math.random() > 0.88) {
-              // Detecção de pausa musical
-              notesInThisStaff.push({
-                noteName: "Pausa",
-                frequency: 0,
-                durationBeats: 1.0,
-                xPercent: (x / targetWidth) * 100,
-                isRest: true,
-              });
-              x += 24;
-            }
-          }
-
-          // Se o pentagrama não encontrou notas suficientes por ruído, preenche com leitura linear segura
-          if (notesInThisStaff.length < 3) {
-            const fallbackPitches = ["G4", "B4", "D5", "E5", "D5", "B4", "A4"];
-            for (let k = 0; k < fallbackPitches.length; k++) {
-              notesInThisStaff.push({
-                noteName: fallbackPitches[k],
-                frequency: baseFrequencies[fallbackPitches[k]],
-                durationBeats: k % 2 === 0 ? 1.0 : 0.5,
-                xPercent: 18 + k * 11,
-                isRest: false,
-              });
-            }
-          }
-
-          finalSystemsList.push({
-            id: s + 1,
-            topPercent: sysBounds.topPercent,
-            heightPercent: sysBounds.heightPercent,
-            notes: notesInThisStaff,
-          });
-        }
-
-        setDetectedStaffs(finalSystemsList);
-        setCurrentStaffIndex(0);
-        setCurrentNoteIndex(0);
-        if (finalSystemsList[0]?.notes[0]) {
-          setCursorX(finalSystemsList[0].notes[0].xPercent);
-        }
-
-        const name = fileName ? fileName.replace(/\.[^/.]+$/, "") : "Partitura Escaneada";
-        setScoreTitle(name);
-
-        toast.success("Varredura Ótica Concluída!", {
-          description: `${finalSystemsList.length} pentagramas e ${finalSystemsList.reduce((acc, curr) => acc + curr.notes.length, 0)} elementos identificados.`,
-        });
-      } catch (err) {
-        console.error("Erro na leitura OMR:", err);
-        toast.error("Erro ao analisar a imagem da partitura.");
-      } finally {
-        setIsProcessing(false);
+      if (!rawText) {
+        throw new Error("Resposta da IA vazia.");
       }
-    };
+
+      const parsed = JSON.parse(rawText);
+
+      if (parsed.title) setScoreTitle(parsed.title);
+      if (parsed.bpm && typeof parsed.bpm === "number") setBpm(parsed.bpm);
+
+      if (parsed.systems && Array.isArray(parsed.systems) && parsed.systems.length > 0) {
+        setSystems(parsed.systems);
+        setCurrentSystemIndex(0);
+        setCurrentNoteIndex(0);
+        if (parsed.systems[0]?.notes?.[0]) {
+          setCursorX(parsed.systems[0].notes[0].xPercent || 15);
+        }
+        toast.success("Partitura Interpretada com Sucesso!", {
+          description: `${parsed.systems.length} pentagramas e notas reais reconhecidas pela IA.`,
+        });
+      } else {
+        throw new Error("Nenhum sistema musical detectado na partitura.");
+      }
+    } catch (err: any) {
+      console.error("Erro na API de Visão:", err);
+      toast.error("Erro ao analisar via IA: " + (err.message || "Verifique a chave da API"));
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -283,14 +199,14 @@ function LeitorRoute() {
       reader.onloadend = () => {
         const result = reader.result as string;
         setImagePreview(result);
-        processImageOMR(result, file.name);
+        analyzeWithVisionAI(result);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Síntese de Áudio Fiel ao Instrumento Escolhido
-  const playAcousticSound = (freqHz: number, durationSec: number, isRest: boolean) => {
+  // Motor Acústico de Síntese Musical
+  const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
     if (isMuted || isRest || freqHz === 0) return;
     try {
       if (!audioCtxRef.current) {
@@ -305,7 +221,6 @@ function LeitorRoute() {
       const subOsc = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      // Timbre de Saxofone / Sopro
       if (instrument === "sax") {
         osc.type = "sawtooth";
         subOsc.type = "sine";
@@ -320,9 +235,9 @@ function LeitorRoute() {
       osc.frequency.setValueAtTime(adjustedFreq, ctx.currentTime);
       subOsc.frequency.setValueAtTime(adjustedFreq * 2, ctx.currentTime);
 
-      const targetVol = (volume / 100) * 0.22;
+      const targetVol = (volume / 100) * 0.25;
       gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 0.04);
+      gain.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 0.03);
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationSec);
 
       osc.connect(gain);
@@ -338,14 +253,14 @@ function LeitorRoute() {
     }
   };
 
-  // Motor de Reprodução Sincronizado Nota por Nota
-  const stepPlayback = (staffIdx: number, noteIdx: number) => {
+  // Sequenciador de reprodução nota por nota
+  const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
-    const currentStaff = detectedStaffs[staffIdx];
+    const currentStaff = systems[sIdx];
     if (!currentStaff) return;
 
-    const note = currentStaff.notes[noteIdx];
+    const note = currentStaff.notes[nIdx];
     if (!note) return;
 
     const secondsPerBeat = 60 / bpm;
@@ -353,28 +268,28 @@ function LeitorRoute() {
     const durationMs = durationSec * 1000;
 
     setCursorX(note.xPercent);
-    setCurrentStaffIndex(staffIdx);
-    setCurrentNoteIndex(noteIdx);
+    setCurrentSystemIndex(sIdx);
+    setCurrentNoteIndex(nIdx);
     setCurrentBeat((prev) => (prev + 1) % 4);
 
-    playAcousticSound(note.frequency, durationSec, note.isRest);
+    playSynthesizedTone(note.frequency, durationSec, note.isRest);
 
     playbackTimerRef.current = setTimeout(() => {
-      if (noteIdx < currentStaff.notes.length - 1) {
-        stepPlayback(staffIdx, noteIdx + 1);
+      if (nIdx < currentStaff.notes.length - 1) {
+        playStep(sIdx, nIdx + 1);
       } else {
-        if (staffIdx < detectedStaffs.length - 1) {
-          stepPlayback(staffIdx + 1, 0);
+        if (sIdx < systems.length - 1) {
+          playStep(sIdx + 1, 0); // Pula de pentagrama
         } else {
-          stepPlayback(0, 0); // Fim da folha: reinicia
+          playStep(0, 0); // Reinicia ao final da folha
         }
       }
     }, durationMs);
   };
 
   useEffect(() => {
-    if (isPlaying && detectedStaffs.length > 0) {
-      stepPlayback(currentStaffIndex, currentNoteIndex);
+    if (isPlaying && systems.length > 0) {
+      playStep(currentSystemIndex, currentNoteIndex);
     } else {
       if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
     }
@@ -386,19 +301,19 @@ function LeitorRoute() {
   const handleReset = () => {
     setIsPlaying(false);
     if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
-    setCurrentStaffIndex(0);
+    setCurrentSystemIndex(0);
     setCurrentNoteIndex(0);
-    if (detectedStaffs[0]?.notes[0]) {
-      setCursorX(detectedStaffs[0].notes[0].xPercent);
+    if (systems[0]?.notes[0]) {
+      setCursorX(systems[0].notes[0].xPercent);
     }
   };
 
-  const activeStaff = detectedStaffs[currentStaffIndex] || detectedStaffs[0];
+  const activeStaff = systems[currentSystemIndex] || systems[0];
   const activeNote = activeStaff?.notes[currentNoteIndex];
 
   return (
     <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
-      {/* Topo / Barra de Informações da Partitura */}
+      {/* Topo / Barra Superior */}
       <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <Button
@@ -415,39 +330,51 @@ function LeitorRoute() {
               {scoreTitle}
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Pentagrama {currentStaffIndex + 1}/{detectedStaffs.length || 1} • {activeNote ? (activeNote.isRest ? "Pausa" : `Nota: ${activeNote.noteName}`) : "Aguardando"}
+              Pentagrama {currentSystemIndex + 1}/{systems.length || 1} • {activeNote ? (activeNote.isRest ? "Pausa" : `Nota: ${activeNote.noteName}`) : "Pronto para tocar"}
             </p>
           </div>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowMixer(!showMixer)}
-          className={`border-gray-700 h-7 px-2.5 text-[11px] flex items-center gap-1.5 ${
-            showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
-          }`}
-        >
-          <SlidersHorizontal className="w-3 h-3" />
-          <span>Mixer</span>
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowKeyModal(true)}
+            className="h-8 w-8 text-gray-400 hover:text-white"
+            title="Configurar Chave API"
+          >
+            <KeyRound className="w-4 h-4" />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowMixer(!showMixer)}
+            className={`border-gray-700 h-7 px-2.5 text-[11px] flex items-center gap-1.5 ${
+              showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
+            }`}
+          >
+            <SlidersHorizontal className="w-3 h-3" />
+            <span>Mixer</span>
+          </Button>
+        </div>
       </header>
 
-      {/* Visualizador da Partitura com Destaque Dinâmico */}
+      {/* Visualizador da Partitura */}
       <main className="flex-1 relative flex items-center justify-center p-2 overflow-hidden bg-[#050608]">
         {!imagePreview ? (
           <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center">
-            <div className="p-3 rounded-full bg-amber-500/10 text-amber-400 mb-3">
+            <div className="p-3 rounded-full bg-emerald-500/10 text-emerald-400 mb-3">
               <FileMusic className="w-8 h-8" />
             </div>
-            <h2 className="text-sm font-semibold mb-1">Upload de Partitura Dinâmica</h2>
+            <h2 className="text-sm font-semibold mb-1">Reconhecimento OMR por IA</h2>
             <p className="text-[11px] text-gray-400 mb-4 max-w-xs">
-              Envie qualquer imagem de partitura. O leitor irá escanear as notas, pausas e pentagramas automaticamente.
+              Envie fotos ou scans de partituras para interpretação rigorosa das notas, pausas e pautas.
             </p>
             <label className="cursor-pointer">
-              <Button asChild size="sm" className="bg-amber-500 hover:bg-amber-600 text-black font-semibold">
+              <Button asChild size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-black font-semibold">
                 <span className="flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5" /> Selecionar Arquivo
+                  <Upload className="w-3.5 h-3.5" /> Selecionar Imagem
                 </span>
               </Button>
               <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
@@ -457,22 +384,22 @@ function LeitorRoute() {
           <div className="relative w-full max-w-xl max-h-[76vh] h-full rounded-md overflow-hidden border border-gray-800 bg-white flex items-center justify-center shadow-2xl">
             <img
               src={imagePreview}
-              alt="Partitura Escaneada"
+              alt="Partitura"
               className="w-full h-full object-contain pointer-events-none"
             />
 
-            {/* CAIXA DE PENTAGRAMA EXTRAÍDO EM TEMPO REAL */}
+            {/* Destaque do Pentagrama Atual */}
             {activeStaff && (
               <div
-                className="absolute left-[2%] right-[2%] border-2 border-red-500/60 bg-red-500/5 pointer-events-none transition-all duration-150"
+                className="absolute left-[2%] right-[2%] border-2 border-red-500/70 bg-red-500/5 pointer-events-none transition-all duration-150"
                 style={{
                   top: `${activeStaff.topPercent}%`,
                   height: `${activeStaff.heightPercent}%`,
                 }}
               >
-                {/* CURSOR VERTICAL SINCRONIZADO COM A NOTA ATUAL */}
+                {/* Linha Vermelha Sincronizada */}
                 <div
-                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_10px_rgba(239,68,68,1)] transition-all duration-100"
+                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_12px_rgba(239,68,68,1)] transition-all duration-100"
                   style={{ left: `${cursorX}%` }}
                 >
                   <div className="absolute -top-1 -left-[3.5px] w-2.5 h-2.5 bg-red-600 rounded-full" />
@@ -482,23 +409,64 @@ function LeitorRoute() {
 
             {isProcessing && (
               <div className="absolute inset-0 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
-                <Sparkles className="w-8 h-8 text-amber-400 animate-spin" />
-                <p className="text-xs font-semibold text-amber-200">Realizando varredura ótica completa da partitura...</p>
+                <Sparkles className="w-8 h-8 text-emerald-400 animate-spin" />
+                <p className="text-xs font-semibold text-emerald-200">A IA está decodificando cada compasso e nota...</p>
               </div>
             )}
           </div>
         )}
 
-        {/* Mixer Flutuante */}
+        {/* Modal para Inserir Chave de API */}
+        {showKeyModal && (
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-[#141722] border border-gray-700 p-5 rounded-2xl w-full max-w-sm space-y-3">
+              <h3 className="text-sm font-bold flex items-center gap-2 text-white">
+                <KeyRound className="w-4 h-4 text-emerald-400" /> Chave de Visão Inteligente
+              </h3>
+              <p className="text-xs text-gray-400">
+                Insira sua chave gratuita da API do Gemini para permitir a análise musical precisa por IA.
+              </p>
+              <Input
+                type="password"
+                placeholder="Cole sua API Key aqui"
+                defaultValue={apiKey}
+                id="api-key-input"
+                className="bg-[#090B10] border-gray-700 text-xs text-white"
+              />
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowKeyModal(false)}
+                  className="text-gray-400 text-xs"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const el = document.getElementById("api-key-input") as HTMLInputElement;
+                    handleSaveApiKey(el.value);
+                  }}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-black text-xs font-bold"
+                >
+                  Salvar
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Painel do Mixer */}
         {showMixer && (
           <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
             <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
-              <span className="text-xs font-bold text-gray-200">Mixer & Instrumento</span>
-              <span className="text-[10px] text-amber-400 font-mono">{detectedStaffs.length} Sistemas</span>
+              <span className="text-xs font-bold text-gray-200">Mixer & Timbre</span>
+              <span className="text-[10px] text-amber-400 font-mono">{systems.length} Pautas</span>
             </div>
 
             <div>
-              <span className="text-[10px] text-gray-400 block mb-1">Timbre:</span>
+              <span className="text-[10px] text-gray-400 block mb-1">Instrumento:</span>
               <div className="grid grid-cols-3 gap-1">
                 {(["sax", "piano", "organ"] as const).map((t) => (
                   <button
@@ -551,7 +519,7 @@ function LeitorRoute() {
                   className="h-6 w-6 text-gray-300"
                   onClick={() => setTransposeSemi((p) => p + 1)}
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3 h-3" />
                 </Button>
               </div>
             </div>
@@ -559,7 +527,7 @@ function LeitorRoute() {
         )}
       </main>
 
-      {/* Barra de Reprodução Dinâmica */}
+      {/* Barra de Reprodução */}
       <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2 flex flex-col gap-2 z-20 shadow-lg">
         <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
           <div className="flex items-center gap-1">
@@ -599,8 +567,8 @@ function LeitorRoute() {
             <Slider
               value={[bpm]}
               onValueChange={(val) => setBpm(val[0])}
-              min={50}
-              max={160}
+              min={40}
+              max={180}
               step={1}
               className="flex-1"
             />
@@ -617,23 +585,23 @@ function LeitorRoute() {
           </label>
         </div>
 
-        {/* Indicadores dinâmicos de Pentagramas encontrados */}
+        {/* Pílulas de Navegação por Pentagrama */}
         <div className="flex items-center justify-center gap-1 pt-0.5 overflow-x-auto">
-          {detectedStaffs.map((s, idx) => (
+          {systems.map((s, idx) => (
             <button
               key={s.id}
               onClick={() => {
                 if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
-                setCurrentStaffIndex(idx);
+                setCurrentSystemIndex(idx);
                 setCurrentNoteIndex(0);
                 setCursorX(s.notes[0]?.xPercent || 15);
               }}
               className={`h-1.5 rounded-full transition-all duration-200 ${
-                currentStaffIndex === idx
+                currentSystemIndex === idx
                   ? "w-6 bg-emerald-400"
                   : "w-2 bg-gray-700 hover:bg-gray-500"
               }`}
-              title={`Ir para Pentagrama ${idx + 1}`}
+              title={`Pentagrama ${idx + 1}`}
             />
           ))}
         </div>
