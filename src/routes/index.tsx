@@ -121,7 +121,7 @@ function Index() {
               Histórico
               {lastItem && (
                 <span className="ml-0.5 rounded-full bg-secondary px-1.5 text-[10px] text-muted-foreground">
-                  {JSON.parse(last).length}
+                  {JSON.parse(last ?? "[]").length}
                 </span>
               )}
             </button>

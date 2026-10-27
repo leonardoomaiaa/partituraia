@@ -115,7 +115,7 @@ export function LeitorRoute() {
         setCurrentNoteIndex((prevIndex) => {
           const nextIndex = (prevIndex + 1) % detectedNotes.length;
           const currentNoteObj = detectedNotes[nextIndex];
-          playToneAndClick(noteToFrequency(currentNoteObj.note), currentBeat === 0);
+          if (currentNoteObj) playToneAndClick(noteToFrequency(currentNoteObj.note), currentBeat === 0);
           return nextIndex;
         });
       }, interval);

@@ -40,7 +40,7 @@ const write = (key: string, value: unknown) => {
 const notify = () => window.dispatchEvent(new Event("octava-history"));
 
 export function getSession(): Session {
-  return read<Session>(SESSION_KEY, { notes: [], from: "concertpitch", to: "concertpitch" });
+  return read<Session>(SESSION_KEY, { notes: [], from: "c", to: "c" });
 }
 export function setSession(s: Session) {
   write(SESSION_KEY, s);
