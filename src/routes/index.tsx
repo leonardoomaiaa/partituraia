@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Camera,
   Clock,
@@ -85,7 +85,10 @@ function Index() {
   const [paywall, setPaywall] = useState(false);
   const sub = useSubscription();
 
-  const last = localStorage.getItem("octava-history");
+  const [last, setLast] = useState<string | null>(null);
+  useEffect(() => {
+    setLast(localStorage.getItem("octava-history"));
+  }, []);
   let lastItem: { original: string[]; result: string[]; ts: number } | null = null;
   try {
     const parsed = last ? (JSON.parse(last) as Array<{ original: string[]; result: string[]; ts: number }>) : [];
