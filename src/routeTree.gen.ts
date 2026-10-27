@@ -10,33 +10,141 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AfinadorRouteImport } from './routes/afinador'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as ContaRouteImport } from './routes/conta'
+import { Route as LeitorRouteImport } from './routes/leitor'
+import { Route as MetronomoRouteImport } from './routes/metronomo'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as ResultadoRouteImport } from './routes/resultado'
+import { Route as TecladoRouteImport } from './routes/teclado'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AfinadorRoute = AfinadorRouteImport.update({
+  id: '/afinador',
+  path: '/afinador',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContaRoute = ContaRouteImport.update({
+  id: '/conta',
+  path: '/conta',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LeitorRoute = LeitorRouteImport.update({
+  id: '/leitor',
+  path: '/leitor',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetronomoRoute = MetronomoRouteImport.update({
+  id: '/metronomo',
+  path: '/metronomo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResultadoRoute = ResultadoRouteImport.update({
+  id: '/resultado',
+  path: '/resultado',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TecladoRoute = TecladoRouteImport.update({
+  id: '/teclado',
+  path: '/teclado',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/afinador': typeof AfinadorRoute
+  '/auth': typeof AuthRoute
+  '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
+  '/metronomo': typeof MetronomoRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/resultado': typeof ResultadoRoute
+  '/teclado': typeof TecladoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/afinador': typeof AfinadorRoute
+  '/auth': typeof AuthRoute
+  '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
+  '/metronomo': typeof MetronomoRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/resultado': typeof ResultadoRoute
+  '/teclado': typeof TecladoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/afinador': typeof AfinadorRoute
+  '/auth': typeof AuthRoute
+  '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
+  '/metronomo': typeof MetronomoRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/resultado': typeof ResultadoRoute
+  '/teclado': typeof TecladoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/afinador'
+    | '/auth'
+    | '/conta'
+    | '/leitor'
+    | '/metronomo'
+    | '/reset-password'
+    | '/resultado'
+    | '/teclado'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/afinador'
+    | '/auth'
+    | '/conta'
+    | '/leitor'
+    | '/metronomo'
+    | '/reset-password'
+    | '/resultado'
+    | '/teclado'
+  id:
+    | '__root__'
+    | '/'
+    | '/afinador'
+    | '/auth'
+    | '/conta'
+    | '/leitor'
+    | '/metronomo'
+    | '/reset-password'
+    | '/resultado'
+    | '/teclado'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AfinadorRoute: typeof AfinadorRoute
+  AuthRoute: typeof AuthRoute
+  ContaRoute: typeof ContaRoute
+  LeitorRoute: typeof LeitorRoute
+  MetronomoRoute: typeof MetronomoRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
+  ResultadoRoute: typeof ResultadoRoute
+  TecladoRoute: typeof TecladoRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +156,75 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/afinador': {
+      id: '/afinador'
+      path: '/afinador'
+      fullPath: '/afinador'
+      preLoaderRoute: typeof AfinadorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/conta': {
+      id: '/conta'
+      path: '/conta'
+      fullPath: '/conta'
+      preLoaderRoute: typeof ContaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/leitor': {
+      id: '/leitor'
+      path: '/leitor'
+      fullPath: '/leitor'
+      preLoaderRoute: typeof LeitorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metronomo': {
+      id: '/metronomo'
+      path: '/metronomo'
+      fullPath: '/metronomo'
+      preLoaderRoute: typeof MetronomoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/resultado': {
+      id: '/resultado'
+      path: '/resultado'
+      fullPath: '/resultado'
+      preLoaderRoute: typeof ResultadoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/teclado': {
+      id: '/teclado'
+      path: '/teclado'
+      fullPath: '/teclado'
+      preLoaderRoute: typeof TecladoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AfinadorRoute: AfinadorRoute,
+  AuthRoute: AuthRoute,
+  ContaRoute: ContaRoute,
+  LeitorRoute: LeitorRoute,
+  MetronomoRoute: MetronomoRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
+  ResultadoRoute: ResultadoRoute,
+  TecladoRoute: TecladoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
