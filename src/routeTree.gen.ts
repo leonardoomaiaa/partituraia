@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AfinadorRouteImport } from './routes/afinador'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ContaRouteImport } from './routes/conta'
+import { Route as LeitorRouteImport } from './routes/leitor'
 import { Route as MetronomoRouteImport } from './routes/metronomo'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ResultadoRouteImport } from './routes/resultado'
@@ -36,6 +37,11 @@ const AuthRoute = AuthRouteImport.update({
 const ContaRoute = ContaRouteImport.update({
   id: '/conta',
   path: '/conta',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LeitorRoute = LeitorRouteImport.update({
+  id: '/leitor',
+  path: '/leitor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetronomoRoute = MetronomoRouteImport.update({
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/afinador': typeof AfinadorRoute
   '/auth': typeof AuthRoute
   '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
   '/metronomo': typeof MetronomoRoute
   '/reset-password': typeof ResetPasswordRoute
   '/resultado': typeof ResultadoRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/afinador': typeof AfinadorRoute
   '/auth': typeof AuthRoute
   '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
   '/metronomo': typeof MetronomoRoute
   '/reset-password': typeof ResetPasswordRoute
   '/resultado': typeof ResultadoRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/afinador': typeof AfinadorRoute
   '/auth': typeof AuthRoute
   '/conta': typeof ContaRoute
+  '/leitor': typeof LeitorRoute
   '/metronomo': typeof MetronomoRoute
   '/reset-password': typeof ResetPasswordRoute
   '/resultado': typeof ResultadoRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/afinador'
     | '/auth'
     | '/conta'
+    | '/leitor'
     | '/metronomo'
     | '/reset-password'
     | '/resultado'
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/afinador'
     | '/auth'
     | '/conta'
+    | '/leitor'
     | '/metronomo'
     | '/reset-password'
     | '/resultado'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/afinador'
     | '/auth'
     | '/conta'
+    | '/leitor'
     | '/metronomo'
     | '/reset-password'
     | '/resultado'
@@ -128,6 +140,7 @@ export interface RootRouteChildren {
   AfinadorRoute: typeof AfinadorRoute
   AuthRoute: typeof AuthRoute
   ContaRoute: typeof ContaRoute
+  LeitorRoute: typeof LeitorRoute
   MetronomoRoute: typeof MetronomoRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   ResultadoRoute: typeof ResultadoRoute
@@ -162,6 +175,13 @@ declare module '@tanstack/react-router' {
       path: '/conta'
       fullPath: '/conta'
       preLoaderRoute: typeof ContaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/leitor': {
+      id: '/leitor'
+      path: '/leitor'
+      fullPath: '/leitor'
+      preLoaderRoute: typeof LeitorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metronomo': {
@@ -200,6 +220,7 @@ const rootRouteChildren: RootRouteChildren = {
   AfinadorRoute: AfinadorRoute,
   AuthRoute: AuthRoute,
   ContaRoute: ContaRoute,
+  LeitorRoute: LeitorRoute,
   MetronomoRoute: MetronomoRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   ResultadoRoute: ResultadoRoute,
