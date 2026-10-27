@@ -6,3 +6,4 @@
   {"capability":"stripe billing","source":"Stripe","outcome":"preserve","status":"blocked","next_action":"add STRIPE_SECRET_KEY"},
   {"capability":"history (browser storage)","source":"localStorage","outcome":"preserve","status":"verified","next_action":"none"}
 ]
+
