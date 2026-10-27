@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, createFileRoute } from "@tanstack/react-router";
-import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Upload, Play, Square, Music, FileText, Sparkles, AlertCircle, Volume2 } from "lucide-react";
@@ -299,7 +298,6 @@ function LeitorRoute() {
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 }
