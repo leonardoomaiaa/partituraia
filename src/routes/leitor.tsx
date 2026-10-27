@@ -1,12 +1,24 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, createFileRoute } from "@tanstack/react-router";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Upload, Play, Square, Music, FileText, Sparkles, AlertCircle, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 
-export function LeitorRoute() {
+export const Route = createFileRoute("/leitor")({
+  head: () => ({
+    meta: [
+      { title: "Leitor de partitura — Octava" },
+      { name: "description", content: "Envie a foto de uma partitura e ouça as notas tocadas no tempo." },
+      { property: "og:title", content: "Leitor de partitura — Octava" },
+      { property: "og:description", content: "Envie a foto de uma partitura e ouça as notas tocadas no tempo." },
+    ],
+  }),
+  component: LeitorRoute,
+});
+
+function LeitorRoute() {
   const navigate = useNavigate();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
