@@ -1,0 +1,8 @@
+[
+  {"capability":"code","source":"archive","outcome":"migrate","status":"verified","next_action":"none"},
+  {"capability":"schema (profiles)","source":"drizzle migrations","outcome":"migrate","status":"verified","next_action":"none"},
+  {"capability":"records","source":"old backend","outcome":"migrate","status":"pending","next_action":"user exports profiles + users CSV"},
+  {"capability":"auth (email + Google)","source":"Cloud auth","outcome":"migrate","status":"implemented","next_action":"verify with imported users"},
+  {"capability":"stripe billing","source":"Stripe","outcome":"preserve","status":"blocked","next_action":"add STRIPE_SECRET_KEY"},
+  {"capability":"history (browser storage)","source":"localStorage","outcome":"preserve","status":"verified","next_action":"none"}
+]
