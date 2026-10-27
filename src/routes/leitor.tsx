@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BottomNav } from "@/components/BottomNav";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -12,7 +12,6 @@ import {
   SlidersHorizontal,
   Volume2,
   VolumeX,
-  Music,
   Minus,
   Plus,
   Sparkles,
@@ -20,15 +19,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-export function LeitorRoute() {
+export const Route = createFileRoute("/leitor")({
+  component: LeitorRoute,
+});
+
+function LeitorRoute() {
   const navigate = useNavigate();
 
-  // Estados de Imagem / Partitura
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  // Estados de Imagem e Partitura
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Estados de Reprodução & Metrônomo
+  // Estados de Reprodução & Metrónomo
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(76);
   const [transposeSemi, setTransposeSemi] = useState(0);
@@ -37,11 +39,11 @@ export function LeitorRoute() {
   const [instrument, setInstrument] = useState<"piano" | "organ" | "flute">("piano");
   const [showMixer, setShowMixer] = useState(false);
 
-  // Posição do cursor de leitura (em percentagem: 0% a 100%)
+  // Posição da linha de leitura (0% a 100%)
   const [cursorProgress, setCursorProgress] = useState(0);
   const [currentBeat, setCurrentBeat] = useState(0);
 
-  // Sequência melódica/harmónica de demonstração
+  // Sequência melódica
   const scoreMelody = [
     { note: "C4", dur: 1 },
     { note: "E4", dur: 1 },
@@ -69,7 +71,6 @@ export function LeitorRoute() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result as string);
@@ -209,7 +210,7 @@ export function LeitorRoute() {
             </div>
             <h2 className="text-base font-semibold mb-1">Escanear Partitura</h2>
             <p className="text-xs text-gray-400 mb-6 max-w-xs">
-              Carregue ou fotografe uma pauta para iniciar o leitor interativo.
+              Carregue ou fotografe uma partitura para iniciar o leitor interativo.
             </p>
             <label className="cursor-pointer">
               <Button asChild className="bg-amber-500 hover:bg-amber-600 text-black font-semibold px-6">
@@ -228,7 +229,7 @@ export function LeitorRoute() {
               className="w-full h-full object-contain pointer-events-none"
             />
 
-            {/* Linha vertical de varredura dinâmica */}
+            {/* Linha vermelha de varredura estilo PlayScore 2 */}
             <div
               className="absolute top-0 bottom-0 w-[2.5px] bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.9)] transition-all duration-150 pointer-events-none z-10"
               style={{ left: `${cursorProgress}%` }}
