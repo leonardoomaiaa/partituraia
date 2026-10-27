@@ -365,3 +365,281 @@ function LeitorRoute() {
       } else {
         if (staffIdx < detectedStaffs.length - 1) {
           stepPlayback(staffIdx + 1, 0);
+        } else {
+          stepPlayback(0, 0); // Fim da folha: reinicia
+        }
+      }
+    }, durationMs);
+  };
+
+  useEffect(() => {
+    if (isPlaying && detectedStaffs.length > 0) {
+      stepPlayback(currentStaffIndex, currentNoteIndex);
+    } else {
+      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+    }
+    return () => {
+      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+    };
+  }, [isPlaying, bpm, transposeSemi, instrument, isMuted, volume]);
+
+  const handleReset = () => {
+    setIsPlaying(false);
+    if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+    setCurrentStaffIndex(0);
+    setCurrentNoteIndex(0);
+    if (detectedStaffs[0]?.notes[0]) {
+      setCursorX(detectedStaffs[0].notes[0].xPercent);
+    }
+  };
+
+  const activeStaff = detectedStaffs[currentStaffIndex] || detectedStaffs[0];
+  const activeNote = activeStaff?.notes[currentNoteIndex];
+
+  return (
+    <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
+      {/* Topo / Barra de Informações da Partitura */}
+      <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate({ to: "/" })}
+            className="text-gray-400 hover:text-white h-8 w-8"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h1 className="text-xs font-bold flex items-center gap-1.5 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              {scoreTitle}
+            </h1>
+            <p className="text-[10px] text-gray-400 font-mono">
+              Pentagrama {currentStaffIndex + 1}/{detectedStaffs.length || 1} • {activeNote ? (activeNote.isRest ? "Pausa" : `Nota: ${activeNote.noteName}`) : "Aguardando"}
+            </p>
+          </div>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowMixer(!showMixer)}
+          className={`border-gray-700 h-7 px-2.5 text-[11px] flex items-center gap-1.5 ${
+            showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
+          }`}
+        >
+          <SlidersHorizontal className="w-3 h-3" />
+          <span>Mixer</span>
+        </Button>
+      </header>
+
+      {/* Visualizador da Partitura com Destaque Dinâmico */}
+      <main className="flex-1 relative flex items-center justify-center p-2 overflow-hidden bg-[#050608]">
+        {!imagePreview ? (
+          <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center">
+            <div className="p-3 rounded-full bg-amber-500/10 text-amber-400 mb-3">
+              <FileMusic className="w-8 h-8" />
+            </div>
+            <h2 className="text-sm font-semibold mb-1">Upload de Partitura Dinâmica</h2>
+            <p className="text-[11px] text-gray-400 mb-4 max-w-xs">
+              Envie qualquer imagem de partitura. O leitor irá escanear as notas, pausas e pentagramas automaticamente.
+            </p>
+            <label className="cursor-pointer">
+              <Button asChild size="sm" className="bg-amber-500 hover:bg-amber-600 text-black font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5" /> Selecionar Arquivo
+                </span>
+              </Button>
+              <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+            </label>
+          </div>
+        ) : (
+          <div className="relative w-full max-w-xl max-h-[76vh] h-full rounded-md overflow-hidden border border-gray-800 bg-white flex items-center justify-center shadow-2xl">
+            <img
+              src={imagePreview}
+              alt="Partitura Escaneada"
+              className="w-full h-full object-contain pointer-events-none"
+            />
+
+            {/* CAIXA DE PENTAGRAMA EXTRAÍDO EM TEMPO REAL */}
+            {activeStaff && (
+              <div
+                className="absolute left-[2%] right-[2%] border-2 border-red-500/60 bg-red-500/5 pointer-events-none transition-all duration-150"
+                style={{
+                  top: `${activeStaff.topPercent}%`,
+                  height: `${activeStaff.heightPercent}%`,
+                }}
+              >
+                {/* CURSOR VERTICAL SINCRONIZADO COM A NOTA ATUAL */}
+                <div
+                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_10px_rgba(239,68,68,1)] transition-all duration-100"
+                  style={{ left: `${cursorX}%` }}
+                >
+                  <div className="absolute -top-1 -left-[3.5px] w-2.5 h-2.5 bg-red-600 rounded-full" />
+                </div>
+              </div>
+            )}
+
+            {isProcessing && (
+              <div className="absolute inset-0 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
+                <Sparkles className="w-8 h-8 text-amber-400 animate-spin" />
+                <p className="text-xs font-semibold text-amber-200">Realizando varredura ótica completa da partitura...</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Mixer Flutuante */}
+        {showMixer && (
+          <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
+              <span className="text-xs font-bold text-gray-200">Mixer & Instrumento</span>
+              <span className="text-[10px] text-amber-400 font-mono">{detectedStaffs.length} Sistemas</span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-gray-400 block mb-1">Timbre:</span>
+              <div className="grid grid-cols-3 gap-1">
+                {(["sax", "piano", "organ"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setInstrument(t)}
+                    className={`py-1 text-[10px] rounded capitalize transition ${
+                      instrument === t
+                        ? "bg-amber-500 text-black font-bold"
+                        : "bg-gray-800 text-gray-300"
+                    }`}
+                  >
+                    {t === "sax" ? "Sax" : t === "piano" ? "Piano" : "Órgão"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>Volume:</span>
+                <span>{volume}%</span>
+              </div>
+              <Slider
+                value={[volume]}
+                onValueChange={(val) => setVolume(val[0])}
+                max={100}
+                step={1}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>Transposição:</span>
+                <span className="font-mono text-amber-400">{transposeSemi > 0 ? `+${transposeSemi}` : transposeSemi} ST</span>
+              </div>
+              <div className="flex items-center justify-between bg-[#0A0C12] p-1 rounded-lg border border-gray-800">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 text-gray-300"
+                  onClick={() => setTransposeSemi((p) => p - 1)}
+                >
+                  <Minus className="w-3 h-3" />
+                </Button>
+                <span className="text-[11px] font-mono font-bold">{transposeSemi} semitons</span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 text-gray-300"
+                  onClick={() => setTransposeSemi((p) => p + 1)}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Barra de Reprodução Dinâmica */}
+      <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2 flex flex-col gap-2 z-20 shadow-lg">
+        <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={handleReset}
+              className="text-gray-400 hover:text-white h-8 w-8"
+              title="Voltar ao início"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </Button>
+
+            <Button
+              size="icon"
+              onClick={() => setIsPlaying(!isPlaying)}
+              className={`h-10 w-10 rounded-full shadow-lg transition-transform active:scale-95 ${
+                isPlaying
+                  ? "bg-red-500 hover:bg-red-600 text-white"
+                  : "bg-emerald-500 hover:bg-emerald-600 text-black"
+              }`}
+            >
+              {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+            </Button>
+
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setIsMuted(!isMuted)}
+              className="text-gray-400 hover:text-white h-8 w-8"
+            >
+              {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+
+          <div className="flex-1 flex items-center gap-2 max-w-xs">
+            <Slider
+              value={[bpm]}
+              onValueChange={(val) => setBpm(val[0])}
+              min={50}
+              max={160}
+              step={1}
+              className="flex-1"
+            />
+            <div className="text-right w-14 font-mono text-[11px] text-gray-300">
+              ♩ = <span className="font-bold text-amber-400">{bpm}</span>
+            </div>
+          </div>
+
+          <label className="cursor-pointer">
+            <div className="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-300 border border-gray-700 transition">
+              <Camera className="w-3.5 h-3.5" />
+            </div>
+            <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+          </label>
+        </div>
+
+        {/* Indicadores dinâmicos de Pentagramas encontrados */}
+        <div className="flex items-center justify-center gap-1 pt-0.5 overflow-x-auto">
+          {detectedStaffs.map((s, idx) => (
+            <button
+              key={s.id}
+              onClick={() => {
+                if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+                setCurrentStaffIndex(idx);
+                setCurrentNoteIndex(0);
+                setCursorX(s.notes[0]?.xPercent || 15);
+              }}
+              className={`h-1.5 rounded-full transition-all duration-200 ${
+                currentStaffIndex === idx
+                  ? "w-6 bg-emerald-400"
+                  : "w-2 bg-gray-700 hover:bg-gray-500"
+              }`}
+              title={`Ir para Pentagrama ${idx + 1}`}
+            />
+          ))}
+        </div>
+      </footer>
+
+      <BottomNav />
+    </div>
+  );
+}
