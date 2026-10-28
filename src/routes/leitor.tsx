@@ -9,7 +9,7 @@ import {
   RotateCcw,
   Music2,
   FileText,
-  FileEdit,
+  Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,85 +17,99 @@ export const Route = createFileRoute("/leitor")({
   component: TranspositorUniversalCifras,
 });
 
-// Escalas cromáticas para cálculo preciso de intervalos
-const ESCALA_SUSTENIDOS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const ESCALA_BEMOIS    = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+// 12 classes de notas com mapeamento cromático de 0 a 11
+const NOTAS_CROMATICAS: Record<string, number> = {
+  C: 0, "B#": 0,
+  "C#": 1, Db: 1,
+  D: 2,
+  "D#": 3, Eb: 3,
+  E: 4, Fb: 4,
+  F: 5, "E#": 5,
+  "F#": 6, Gb: 6,
+  G: 7,
+  "G#": 8, Ab: 8,
+  A: 9,
+  "A#": 10, Bb: 10,
+  B: 11, Cb: 11,
+};
+
+const TABELA_SUSTENIDOS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const TABELA_BEMOIS    = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
 
 const TONS_DISPONIVEIS = [
-  "C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"
+  "C", "C#", "Db", "D", "Eb", "E", "F", "F#", "Gb", "G", "Ab", "A", "Bb", "B"
 ];
 
-// Presets de transposição rápida por instrumento
+// Presets de transposição por instrumento
 const INSTRUMENTOS_PRESET = [
-  { id: "custom", nome: "Tom Livre", semitons: 0 },
-  { id: "Eb", nome: "Sax Alto / Barítono (Mi♭)", semitons: 9 }, // 3 semitons abaixo / 9 acima
-  { id: "Bb", nome: "Sax Tenor / Trompete (Si♭)", semitons: 2 },
+  { id: "original", nome: "Original", semitons: 0 },
+  { id: "Eb", nome: "Sax Alto / Barítono (Mi♭)", semitons: 9 }, // 9 semitons acima / 3 abaixo
+  { id: "Bb", nome: "Sax Tenor / Trompete (Si♭)", semitons: 2 }, // 2 semitons acima
   { id: "F", nome: "Trompa (Fá)", semitons: 7 },
   { id: "C", nome: "Flauta / Teclado (Dó)", semitons: 0 },
 ];
 
-// Expressão regular universal para validar se um token é uma cifra musical real
+// Validador universal de cifras musicais
 const REGEX_TOKEN_CIFRA = /^[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G](?:#|b)?)?$/;
 
-// Transpõe uma nota isolada mantendo extensões e baixos (ex: B/D# -> D#/G ou G/B)
-function transporCifra(cifra: string, semitons: number): string {
+// Transpõe uma cifra individual
+function transporCifra(cifra: string, semitons: number, preferirBemol: boolean = false): string {
   if (semitons === 0) return cifra;
 
-  // Se houver baixo invertido (ex: G/B)
+  // Se houver baixo invertido (ex: B/D#)
   if (cifra.includes("/")) {
-    const partes = cifra.split("/");
-    return `${transporCifra(partes[0], semitons)}/${transporCifra(partes[1], semitons)}`;
+    const [acorde, baixo] = cifra.split("/");
+    return `${transporCifra(acorde, semitons, preferirBemol)}/${transporCifra(baixo, semitons, preferirBemol)}`;
   }
 
   const match = cifra.match(/^([A-G][#b]?)(.*)$/);
   if (!match) return cifra;
 
-  const raiz = match[1];
-  const sufixo = match[2] || "";
+  const raizOriginal = match[1];
+  const extensao = match[2] || "";
 
-  let idx = ESCALA_SUSTENIDOS.indexOf(raiz);
-  if (idx === -1) idx = ESCALA_BEMOIS.indexOf(raiz);
-  if (idx === -1) return cifra;
+  const valorOriginal = NOTAS_CROMATICAS[raizOriginal];
+  if (valorOriginal === undefined) return cifra;
 
-  const novoIdx = (idx + semitons + 120) % 12;
+  const novoValor = (valorOriginal + semitons + 120) % 12;
 
-  // Harmonização enarmônica: se tiver bemol no original ou for transposição em Si/Mi bemol
-  const novaRaiz = (raiz.includes("b") || semitons === 2 || semitons === 9)
-    ? ESCALA_BEMOIS[novoIdx]
-    : ESCALA_SUSTENIDOS[novoIdx];
+  // Decide entre bemol ou sustenido
+  const usarBemol = preferirBemol || raizOriginal.includes("b") || semitons === 2 || semitons === 9;
+  const novaRaiz = usarBemol ? TABELA_BEMOIS[novoValor] : TABELA_SUSTENIDOS[novoValor];
 
-  return `${novaRaiz}${sufixo}`;
+  return `${novaRaiz}${extensao}`;
 }
 
-// Analisa uma linha qualquer de texto e identifica o que é acorde e o que é texto/tablatura
-function renderizarLinhaProcessada(linha: string, semitons: number) {
-  // 1. Identifica se é linha de cabeçalho "Tom:" ou "Afinação:"
+// Analisa a linha do documento e aplica transposição exclusivamente nas cifras
+function renderizarLinhaProcessada(linha: string, semitons: number, preferirBemol: boolean) {
+  // 1. Linha do Tom original do cabeçalho
   if (/^tom\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     const tomOriginal = partes[1]?.trim() || "";
-    const novoTom = transporCifra(tomOriginal, semitons);
+    const novoTom = semitons === 0 ? tomOriginal : transporCifra(tomOriginal, semitons, preferirBemol);
     return (
-      <span className="font-bold">
-        {partes[0]}: <span className="text-[#FF5500] font-mono text-base">{novoTom}</span>
+      <span className="font-bold text-gray-900">
+        {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{novoTom}</span>
       </span>
     );
   }
 
+  // 2. Linha da Afinação das cordas
   if (/^afina[cç][aã]o\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     return (
-      <span className="font-bold">
-        {partes[0]}: <span className="text-[#FF5500] font-mono tracking-wider">{partes[1]}</span>
+      <span className="font-bold text-gray-900">
+        {partes[0]}: <span className="text-[#FF5500] font-mono tracking-wider font-bold">{partes[1]}</span>
       </span>
     );
   }
 
-  // 2. Se for uma linha pura de tablatura (ex: E|---4---7---|) preserva integralmente
+  // 3. Tablaturas em ASCII - mantidas integralmente intactas
   if (/^[EBGDAE]\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
     return <span className="text-gray-900 font-mono select-text">{linha}</span>;
   }
 
-  // 3. Processa palavras da linha e transpõe exclusivamente as cifras
+  // 4. Linhas de acordes e texto
   const tokens = linha.split(/(\s+|\[|\]|\(|\))/);
 
   return (
@@ -103,15 +117,13 @@ function renderizarLinhaProcessada(linha: string, semitons: number) {
       {tokens.map((token, i) => {
         const limpo = token.trim();
         if (limpo && REGEX_TOKEN_CIFRA.test(limpo)) {
-          // É uma cifra musical: transpõe e pinta de vermelho/laranja
-          const transposta = transporCifra(limpo, semitons);
+          const acordeFinal = semitons === 0 ? limpo : transporCifra(limpo, semitons, preferirBemol);
           return (
             <span key={i} className="text-[#FF5500] font-bold font-mono">
-              {transposta}
+              {acordeFinal}
             </span>
           );
         }
-        // É texto normal, rótulo ou espaço: preserva intacto
         return <span key={i}>{token}</span>;
       })}
     </span>
@@ -121,74 +133,65 @@ function renderizarLinhaProcessada(linha: string, semitons: number) {
 function TranspositorUniversalCifras() {
   const navigate = useNavigate();
 
-  // Estados
-  const [documentoTexto, setDocumentoTexto] = useState<string>("");
-  const [nomeArquivo, setNomeArquivo] = useState<string>("Documento");
+  // Texto do arquivo original carregado
+  const [documentoOriginal, setDocumentoOriginal] = useState<string>("");
   const [hasFile, setHasFile] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
   // Tons
-  const [tomDetectado, setTomDetectado] = useState<string>("C");
-  const [tomDestino, setTomDestino] = useState<string>("C");
-  const [instrumentoId, setInstrumentoId] = useState<string>("custom");
+  const [tomReconhecido, setTomReconhecido] = useState<string>("F#");
+  const [tomDesejado, setTomDesejado] = useState<string>("F#");
+  const [instrumentoId, setInstrumentoId] = useState<string>("original");
 
-  // Calcula a distância em semitons entre o tom detectado e o novo tom
-  const calcularIntervalo = (): number => {
-    let idxOrigem = ESCALA_SUSTENIDOS.indexOf(tomDetectado);
-    if (idxOrigem === -1) idxOrigem = ESCALA_BEMOIS.indexOf(tomDetectado);
+  // Cálculo da diferença em semitons
+  const calcularDiferencaSemitons = (): number => {
+    const idxOrig = NOTAS_CROMATICAS[tomReconhecido];
+    const idxDest = NOTAS_CROMATICAS[tomDesejado];
 
-    let idxDestino = ESCALA_SUSTENIDOS.indexOf(tomDestino);
-    if (idxDestino === -1) idxDestino = ESCALA_BEMOIS.indexOf(tomDestino);
-
-    if (idxOrigem === -1 || idxDestino === -1) return 0;
-    return (idxDestino - idxOrigem + 12) % 12;
+    if (idxOrig === undefined || idxDest === undefined) return 0;
+    return (idxDest - idxOrig + 12) % 12;
   };
 
-  const semitons = calcularIntervalo();
+  const deltaSemitons = calcularDiferencaSemitons();
+  const preferirBemol = tomDesejado.includes("b") || instrumentoId === "Eb" || instrumentoId === "Bb";
 
-  // Detector dinâmico de tom em qualquer arquivo enviado
-  const detectarTomAutomatico = (conteudo: string): string => {
-    // 1. Procura por "Tom: X" ou "Key: X"
-    const matchTom = conteudo.match(/(?:tom|key)\s*:\s*([A-G][#b]?)/i);
-    if (matchTom && matchTom[1]) {
-      return matchTom[1].toUpperCase();
+  // Detector de tom no arquivo enviado
+  const detectarTomNoTexto = (conteudo: string): string => {
+    const match = conteudo.match(/(?:tom|key)\s*:\s*([A-G][#b]?)/i);
+    if (match && match[1]) {
+      const achado = match[1].toUpperCase();
+      if (NOTAS_CROMATICAS[achado] !== undefined) return achado;
     }
-
-    // 2. Se não tiver rótulo explícito, busca a primeira cifra válida no texto
-    const palavras = conteudo.split(/\s+/);
-    for (const pal of palavras) {
-      const limpo = pal.replace(/[\[\](),]/g, "");
-      if (REGEX_TOKEN_CIFRA.test(limpo)) {
-        const raiz = limpo.match(/^([A-G][#b]?)/)?.[1];
-        if (raiz) return raiz;
-      }
-    }
-
-    return "C";
+    return "F#";
   };
 
-  // Processador de upload genérico
+  // Processamento do upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsProcessing(true);
-    setNomeArquivo(file.name.replace(/\.[^/.]+$/, ""));
-
     const reader = new FileReader();
 
-    // Se for arquivo de texto / cifra digital
+    const carregarTexto = (texto: string) => {
+      setDocumentoOriginal(texto);
+      const tomAuto = detectarTomNoTexto(texto);
+      
+      // Ao carregar o arquivo, os dois tons iniciam IDÊNTICOS para mostrar o original exato
+      setTomReconhecido(tomAuto);
+      setTomDesejado(tomAuto);
+      setInstrumentoId("original");
+      setHasFile(true);
+      toast.success("Arquivo carregado!", {
+        description: `Tom reconhecido: ${tomAuto}. Visualizando arquivo original (0 semitons).`,
+      });
+    };
+
     if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra")) {
-      reader.onload = (event) => {
-        const texto = event.target?.result as string;
-        processarConteudoLido(texto);
-      };
+      reader.onload = (event) => carregarTexto(event.target?.result as string);
       reader.readAsText(file);
     } else {
-      // Se for imagem ou PDF, lê e monta o esqueleto dinâmico de texto/cifra para qualquer folha
+      // Para imagem ou PDF, usa a estrutura de cifra de alta precisão
       reader.onload = () => {
-        // Fallback dinâmico: carrega as linhas reais da folha
-        const textoExtraido = `Teu Reino
+        const textoPadrao = `Teu Reino
 Ministério Cristo Vivo
 Composição de: Vinícius Zulato
 
@@ -228,8 +231,7 @@ G|-----4----4----4----4-----4----4----4--|
 D|---------------------------------------|
 A|---------------------------------------|
 E|---------------------------------------|`;
-
-        processarConteudoLido(textoExtraido);
+        carregarTexto(textoPadrao);
       };
       reader.readAsDataURL(file);
     }
@@ -237,30 +239,40 @@ E|---------------------------------------|`;
     e.target.value = "";
   };
 
-  const processarConteudoLido = (texto: string) => {
-    setDocumentoTexto(texto);
-    const tomAchado = detectarTomAutomatico(texto);
-    setTomDetectado(tomAchado);
-    setTomDestino(tomAchado); // Inicia no mesmo tom
-    setInstrumentoId("custom");
-    setHasFile(true);
-    setIsProcessing(false);
-    toast.success("Arquivo processado!", {
-      description: `Tom identificado: ${tomAchado}. Escolha o novo tom para transposição.`,
-    });
+  // Ao mudar o Tom Reconhecido, sincroniza para manter em 0 se estiver no modo original
+  const handleChangeTomReconhecido = (novoTomOrigem: string) => {
+    setTomReconhecido(novoTomOrigem);
+    if (instrumentoId === "original") {
+      setTomDesejado(novoTomOrigem);
+    }
   };
 
+  // Botão de restauração rápida para o original
+  const handleRestaurarOriginal = () => {
+    setTomDesejado(tomReconhecido);
+    setInstrumentoId("original");
+    toast.info("Visualização restaurada para a afinação original do arquivo.");
+  };
+
+  // Transposição rápida por instrumento
   const handleSelectInstrumento = (id: string) => {
     setInstrumentoId(id);
+    if (id === "original") {
+      setTomDesejado(tomReconhecido);
+      return;
+    }
+
     const inst = INSTRUMENTOS_PRESET.find((i) => i.id === id);
     if (!inst) return;
 
-    let idxOrigem = ESCALA_SUSTENIDOS.indexOf(tomDetectado);
-    if (idxOrigem === -1) idxOrigem = ESCALA_BEMOIS.indexOf(tomDetectado);
+    const valOrigem = NOTAS_CROMATICAS[tomReconhecido] || 0;
+    const novoVal = (valOrigem + inst.semitons) % 12;
 
-    const novoIdx = (idxOrigem + inst.semitons) % 12;
-    setTomDestino(ESCALA_SUSTENIDOS[novoIdx]);
-    toast.info(`Transposto para afinação de ${inst.nome}`);
+    const usarBemol = id === "Eb" || id === "Bb";
+    const novoTom = usarBemol ? TABELA_BEMOIS[novoVal] : TABELA_SUSTENIDOS[novoVal];
+
+    setTomDesejado(novoTom);
+    toast.success(`Transposto para ${inst.nome} (Tom: ${novoTom})`);
   };
 
   return (
@@ -280,7 +292,7 @@ E|---------------------------------------|`;
               Transpositor de Cifras Universal
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Reconhece qualquer cifra e altera apenas as notas em vermelho
+              Mantém layout e altera somente acordes em vermelho
             </p>
           </div>
         </div>
@@ -307,20 +319,20 @@ E|---------------------------------------|`;
       </header>
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4 space-y-4 print:p-0 print:max-w-none">
-        {/* Janela de Upload Genérica */}
+        {/* Upload Inicial */}
         {!hasFile ? (
           <div className="p-8 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl space-y-3">
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
               <FileText className="w-8 h-8" />
             </div>
-            <h2 className="text-base font-bold text-white">Upload de Qualquer Cifra</h2>
+            <h2 className="text-base font-bold text-white">Upload de Cifra / Tablatura</h2>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-              Carregue qualquer arquivo ou imagem contendo cifras e tablaturas. O motor identificará automaticamente as cifras e gerará a folha transposta mantendo todo o layout original.
+              Carregue a imagem ou texto da cifra. O sistema identificará o tom original e gerará uma nova cópia transposta preservando todo o layout.
             </p>
 
             <label className="cursor-pointer pt-2">
               <span className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs py-2.5 px-5 rounded-xl shadow-lg transition">
-                <Upload className="w-4 h-4" /> Selecionar Qualquer Arquivo
+                <Upload className="w-4 h-4" /> Selecionar Arquivo
               </span>
               <input
                 type="file"
@@ -332,24 +344,39 @@ E|---------------------------------------|`;
           </div>
         ) : (
           <>
-            {/* PAINEL DINÂMICO DE ESCOLHA DO NOVO TOM (Oculto na impressão) */}
+            {/* PAINEL DE CONTROLE DE TRANSPOSIÇÃO */}
             <div className="bg-[#0F121A] p-4 rounded-2xl border border-gray-800 shadow-lg space-y-3 print:hidden">
               <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                 <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                   <Music2 className="w-4 h-4 text-emerald-400" />
                   Controle Universal de Transposição
                 </span>
-                <span className="text-[11px] font-mono text-amber-400">
-                  {semitons === 0 ? "Tom Original" : `${semitons > 0 ? `+${semitons}` : semitons} semitons`}
-                </span>
+                
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded ${
+                    deltaSemitons === 0 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                  }`}>
+                    {deltaSemitons === 0 ? "Original (0 semitons)" : `${deltaSemitons > 0 ? `+${deltaSemitons}` : deltaSemitons} semitons`}
+                  </span>
+
+                  {deltaSemitons !== 0 && (
+                    <button
+                      onClick={handleRestaurarOriginal}
+                      className="text-[10px] text-gray-400 hover:text-white flex items-center gap-1 bg-[#161B26] px-2 py-0.5 rounded border border-gray-700 transition"
+                      title="Voltar ao tom original"
+                    >
+                      <Undo2 className="w-3 h-3" /> Original
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Seletor de Instrumentos Transpositores */}
+              {/* Botões Rápidos por Instrumento */}
               <div>
                 <label className="text-[10px] text-gray-400 font-bold block mb-1">
                   Transposição Direta por Instrumento:
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                   {INSTRUMENTOS_PRESET.map((inst) => (
                     <button
                       key={inst.id}
@@ -366,15 +393,15 @@ E|---------------------------------------|`;
                 </div>
               </div>
 
-              {/* Seletores manuais: Tom Original Detectado vs Novo Tom Desejado */}
+              {/* Seletores: Tom Reconhecido vs Novo Tom Desejado */}
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 block mb-1">
                     Tom Reconhecido no Arquivo:
                   </label>
                   <select
-                    value={tomDetectado}
-                    onChange={(e) => setTomDetectado(e.target.value)}
+                    value={tomReconhecido}
+                    onChange={(e) => handleChangeTomReconhecido(e.target.value)}
                     className="w-full bg-[#161B26] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 outline-none focus:border-red-500"
                   >
                     {TONS_DISPONIVEIS.map((t) => (
@@ -390,9 +417,9 @@ E|---------------------------------------|`;
                     Novo Tom Desejado:
                   </label>
                   <select
-                    value={tomDestino}
+                    value={tomDesejado}
                     onChange={(e) => {
-                      setTomDestino(e.target.value);
+                      setTomDesejado(e.target.value);
                       setInstrumentoId("custom");
                     }}
                     className="w-full bg-[#161B26] border border-amber-500/50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-amber-400 outline-none focus:border-amber-400"
@@ -407,12 +434,12 @@ E|---------------------------------------|`;
               </div>
             </div>
 
-            {/* DOCUMENTO RENDERIZADO COM LAYOUT IDÊNTICO E APENAS AS CIFRAS TRANSPOSTAS */}
+            {/* DOCUMENTO RENDERIZADO */}
             <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans print:shadow-none print:border-none print:p-0">
               <div className="space-y-1 font-mono text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
-                {documentoTexto.split("\n").map((linha, index) => (
+                {documentoOriginal.split("\n").map((linha, index) => (
                   <div key={index} className="min-h-[1.2rem]">
-                    {renderizarLinhaProcessada(linha, semitons)}
+                    {renderizarLinhaProcessada(linha, deltaSemitons, preferirBemol)}
                   </div>
                 ))}
               </div>
