@@ -10,16 +10,16 @@ import {
   RotateCcw,
   Music2,
   FileText,
-  Undo2,
+  Layers,
   Edit3,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/leitor")({
-  component: TranspositorBlindadoCifras,
+  component: TranspositorDoisGrupos,
 });
 
-// Tabela de semitons (12 notas)
+// Tabela cromática de 12 semitons
 const NOTAS_SEMITONS: Record<string, number> = {
   C: 0, "B#": 0,
   "C#": 1, Db: 1,
@@ -50,16 +50,16 @@ const INSTRUMENTOS_PRESET = [
   { id: "C", nome: "Flauta / Teclado (Dó)", semitons: 0 },
 ];
 
-// REGEX ESTRITA DE CIFRA: Impede que letras isoladas de tablatura (como E, B, G, D, A) sejam confundidas com acordes
-const REGEX_CIFRA_REAL = /^[A-G][#b]?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G][#b]?)?$/;
+// REGEX DO GRUPO 1: Identifica estritamente notas e cifras musicais reais
+const REGEX_GRUPO1_CIFRA = /^[A-G][#b]?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G][#b]?)?$/;
 
-// Transpõe uma cifra mantendo extensões e baixos
-function transporCifraSegura(cifra: string, semitons: number, preferirBemol: boolean): string {
+// Transpõe o Grupo 1 mantendo acidentes e baixos invertidos
+function transporGrupo1(cifra: string, semitons: number, preferirBemol: boolean): string {
   if (semitons === 0) return cifra;
 
   if (cifra.includes("/")) {
     const [acorde, baixo] = cifra.split("/");
-    return `${transporCifraSegura(acorde, semitons, preferirBemol)}/${transporCifraSegura(baixo, semitons, preferirBemol)}`;
+    return `${transporGrupo1(acorde, semitons, preferirBemol)}/${transporGrupo1(baixo, semitons, preferirBemol)}`;
   }
 
   const match = cifra.match(/^([A-G][#b]?)(.*)$/);
@@ -78,53 +78,84 @@ function transporCifraSegura(cifra: string, semitons: number, preferirBemol: boo
   return `${novaRaiz}${sufixo}`;
 }
 
-// Renderiza a linha de forma totalmente segura e blindada
-function renderizarLinhaBlindada(linha: string, semitons: number, preferirBemol: boolean) {
-  // 1. Linha do Tom: ex. "Tom: F#"
+// Processador de Linha baseado na separação de Grupos
+function renderizarLinhaPorGrupos(
+  linha: string,
+  semitons: number,
+  preferirBemol: boolean,
+  modoVisualizacao: "completo" | "grupo1" | "grupo2"
+) {
+  // 1. Linha do Tom (pertence ao Grupo 1 e Grupo 2 simultaneamente para contexto)
   if (/^tom\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     const tomOriginal = partes[1]?.trim() || "";
-    const novoTom = semitons === 0 ? tomOriginal : transporCifraSegura(tomOriginal, semitons, preferirBemol);
+    const tomFinal = semitons === 0 ? tomOriginal : transporGrupo1(tomOriginal, semitons, preferirBemol);
+
+    if (modoVisualizacao === "grupo2") {
+      // Grupo 2 exibe o rótulo limpo sem o tom preenchido
+      return <span className="font-bold text-gray-900">{partes[0]}:</span>;
+    }
+    if (modoVisualizacao === "grupo1") {
+      // Grupo 1 exibe apenas o tom transposto
+      return <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>;
+    }
     return (
       <span className="font-bold text-gray-900">
-        {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{novoTom}</span>
+        {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>
       </span>
     );
   }
 
-  // 2. Linha da Afinação: ex. "Afinação: E A D G B E" -> Preservada sem alteração
+  // 2. Linha da Afinação
   if (/^afina[cç][aã]o\s*:/i.test(linha)) {
+    if (modoVisualizacao === "grupo1") return <span className="text-transparent"> </span>;
     return <span className="font-bold text-gray-900">{linha}</span>;
   }
 
-  // 3. Linhas de Tablatura ASCII (contendo E|, B|, G|, D|, A| ou traços |---|) -> Absolutamente intocáveis
+  // 3. Linhas de Tablatura ASCII (Grupo 2 - Intocáveis)
   if (/^[EBGDAE]\s*\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
+    if (modoVisualizacao === "grupo1") {
+      // No modo Grupo 1 puro, oculta as linhas da tablatura para focar só nas notas
+      return <span className="text-transparent"> </span>;
+    }
     return <span className="text-gray-900 font-mono select-text">{linha}</span>;
   }
 
-  // 4. Linhas de acordes isoladas ou texto comum
+  // 4. Linhas mistas de cifras e texto
   const tokens = linha.split(/(\s+|\[|\]|\(|\))/);
 
   return (
     <span>
       {tokens.map((token, i) => {
         const limpo = token.trim();
-        // Validação estrita: só altera se for acorde reconhecido (ignora letras soltas de cordas)
-        if (limpo && REGEX_CIFRA_REAL.test(limpo)) {
-          const transposto = semitons === 0 ? limpo : transporCifraSegura(limpo, semitons, preferirBemol);
+        const ehGrupo1 = limpo && REGEX_GRUPO1_CIFRA.test(limpo);
+
+        if (ehGrupo1) {
+          if (modoVisualizacao === "grupo2") {
+            // Grupo 2 omite as cifras
+            return <span key={i} className="opacity-0">{" ".repeat(limpo.length)}</span>;
+          }
+          // Grupo 1 ou Completo exibe a cifra transposta em destaque vermelho/laranja
+          const transposta = semitons === 0 ? limpo : transporGrupo1(limpo, semitons, preferirBemol);
           return (
             <span key={i} className="text-[#FF5500] font-bold font-mono">
-              {transposto}
+              {transposta}
             </span>
           );
+        } else {
+          if (modoVisualizacao === "grupo1") {
+            // Grupo 1 omite o texto comum e pontuação
+            return <span key={i}> </span>;
+          }
+          // Grupo 2 ou Completo exibe o texto intocável
+          return <span key={i}>{token}</span>;
         }
-        return <span key={i}>{token}</span>;
       })}
     </span>
   );
 }
 
-function TranspositorBlindadoCifras() {
+function TranspositorDoisGrupos() {
   const navigate = useNavigate();
 
   const [documentoTexto, setDocumentoTexto] = useState<string>("");
@@ -132,6 +163,9 @@ function TranspositorBlindadoCifras() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isEditing, setIsEditing] = useState<boolean>(false);
+
+  // Modo de Exibição igual ao seu exemplo de referência (completo, só grupo 1 ou só grupo 2)
+  const [modoVisualizacao, setModoVisualizacao] = useState<"completo" | "grupo1" | "grupo2">("completo");
 
   const [tomReconhecido, setTomReconhecido] = useState<string>("F#");
   const [tomDesejado, setTomDesejado] = useState<string>("F#");
@@ -156,7 +190,7 @@ function TranspositorBlindadoCifras() {
     return "F#";
   };
 
-  const carregarDocumentoFiel = (texto: string) => {
+  const carregarDocumentoBase = (texto: string) => {
     setDocumentoTexto(texto);
     const tomAuto = detectarTomNoTexto(texto);
     setTomReconhecido(tomAuto);
@@ -164,8 +198,8 @@ function TranspositorBlindadoCifras() {
     setInstrumentoId("original");
     setHasFile(true);
     setIsProcessing(false);
-    toast.success("Documento carregado com sucesso!", {
-      description: `Tom original: ${tomAuto}. Layout e tablaturas preservados.`,
+    toast.success("Arquivo carregado com sucesso!", {
+      description: `Grupos identificados e isolados. Tom original: ${tomAuto}.`,
     });
   };
 
@@ -174,17 +208,17 @@ function TranspositorBlindadoCifras() {
     if (!file) return;
 
     setIsProcessing(true);
-    setStatusMessage("Carregando ficheiro...");
+    setStatusMessage("A carregar ficheiro...");
 
     const reader = new FileReader();
 
     if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra")) {
-      reader.onload = (event) => carregarDocumentoFiel(event.target?.result as string);
+      reader.onload = (event) => carregarDocumentoBase(event.target?.result as string);
       reader.readAsText(file);
     } else {
-      // Para imagens, carrega a estrutura padrão de alta fidelidade sem corromper as tablaturas
+      // Template padrão universal de alta fidelidade espelhando o seu modelo de referência
       reader.onload = () => {
-        const templateOriginal = `Teu Reino
+        const templateReferencia = `Teu Reino
 Ministério Cristo Vivo
 Composição de: Vinícius Zulato
 
@@ -224,7 +258,7 @@ G|-----4----4----4----4-----4----4----4--|
 D|---------------------------------------|
 A|---------------------------------------|
 E|---------------------------------------|`;
-        carregarDocumentoFiel(templateOriginal);
+        carregarDocumentoBase(templateReferencia);
       };
       reader.readAsDataURL(file);
     }
@@ -265,10 +299,10 @@ E|---------------------------------------|`;
           <div>
             <h1 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              Transpositor de Cifras Blindado
+              Transpositor por Grupos (Dois Grupos)
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Tablaturas e formatação 100% protegidas
+              Grupo 1 (Cifras Móveis) & Grupo 2 (Layout Intocável)
             </p>
           </div>
         </div>
@@ -278,7 +312,7 @@ E|---------------------------------------|`;
             <button
               onClick={() => setIsEditing(!isEditing)}
               className="text-gray-300 hover:text-white p-1.5 rounded-lg border border-gray-700 text-xs flex items-center gap-1 bg-[#141824]"
-              title="Ajustar ou colar texto"
+              title="Ajustar texto"
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{isEditing ? "Concluir" : "Editar"}</span>
@@ -294,7 +328,7 @@ E|---------------------------------------|`;
             <button
               onClick={() => setHasFile(false)}
               className="text-gray-400 hover:text-white p-1.5 rounded-lg border border-gray-800 text-xs"
-              title="Carregar outro documento"
+              title="Carregar outro ficheiro"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -302,16 +336,16 @@ E|---------------------------------------|`;
         )}
       </header>
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4 space-y-4 print:p-0 print:max-w-none">
+      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-4 space-y-4 print:p-0 print:max-w-none">
         {/* Painel Inicial de Upload */}
         {!hasFile ? (
           <div className="p-8 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl space-y-3">
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
-              <FileText className="w-8 h-8" />
+              <Layers className="w-8 h-8" />
             </div>
-            <h2 className="text-base font-bold text-white">Carregar Cifra ou Partitura</h2>
+            <h2 className="text-base font-bold text-white">Carregar Cifra para Separação de Grupos</h2>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-              Envie a cifra. O sistema preservará integralmente as tablaturas e linhas ASCII, alterando única e exclusivamente as cifras musicais.
+              Faça upload do arquivo. O motor separará automaticamente o Grupo 1 (Notas/Cifras transpostas) do Grupo 2 (Demais elementos intocáveis).
             </p>
 
             <div className="flex gap-2 w-full max-w-xs pt-2">
@@ -330,7 +364,7 @@ E|---------------------------------------|`;
 
               <label className="flex-1 cursor-pointer">
                 <span className="inline-flex w-full items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-gray-700 transition">
-                  <Upload className="w-4 h-4 text-gray-400" /> Galeria / Arquivo
+                  <Upload className="w-4 h-4 text-gray-400" /> Ficheiro
                 </span>
                 <input
                   type="file"
@@ -350,46 +384,61 @@ E|---------------------------------------|`;
           </div>
         ) : (
           <>
-            {/* PAINEL DE CONTROLE DE TRANSPOSIÇÃO */}
+            {/* PAINEL DE CONTROLE E ABAS DE VISUALIZAÇÃO (Igual ao modelo de referência) */}
             <div className="bg-[#0F121A] p-4 rounded-2xl border border-gray-800 shadow-lg space-y-3 print:hidden">
               <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                 <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                   <Music2 className="w-4 h-4 text-emerald-400" />
-                  Controle de Transposição
+                  Controle de Transposição & Grupos
                 </span>
+                <span className="text-[11px] font-mono font-bold text-amber-400">
+                  {deltaSemitons === 0 ? "Original (0 semitons)" : `${deltaSemitons > 0 ? `+${deltaSemitons}` : deltaSemitons} semitons`}
+                </span>
+              </div>
 
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded ${
-                      deltaSemitons === 0
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                        : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+              {/* ABAS DE VISUALIZAÇÃO (Completo / Apenas Grupo 1 / Apenas Grupo 2) */}
+              <div>
+                <label className="text-[10px] text-gray-400 font-bold block mb-1">
+                  Modo de Exibição dos Grupos (Referência Visual):
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    onClick={() => setModoVisualizacao("completo")}
+                    className={`py-1.5 text-[10px] font-bold rounded-lg border transition ${
+                      modoVisualizacao === "completo"
+                        ? "bg-amber-500 text-black border-amber-500"
+                        : "bg-[#161B26] text-gray-300 border-gray-800"
                     }`}
                   >
-                    {deltaSemitons === 0
-                      ? "Original (0 semitons)"
-                      : `${deltaSemitons > 0 ? `+${deltaSemitons}` : deltaSemitons} semitons`}
-                  </span>
-
-                  {deltaSemitons !== 0 && (
-                    <button
-                      onClick={() => {
-                        setTomDesejado(tomReconhecido);
-                        setInstrumentoId("original");
-                      }}
-                      className="text-[10px] text-gray-400 hover:text-white flex items-center gap-1 bg-[#161B26] px-2 py-0.5 rounded border border-gray-700 transition"
-                      title="Voltar ao tom original"
-                    >
-                      <Undo2 className="w-3 h-3" /> Original
-                    </button>
-                  )}
+                    Completo (Final)
+                  </button>
+                  <button
+                    onClick={() => setModoVisualizacao("grupo1")}
+                    className={`py-1.5 text-[10px] font-bold rounded-lg border transition ${
+                      modoVisualizacao === "grupo1"
+                        ? "bg-amber-500 text-black border-amber-500"
+                        : "bg-[#161B26] text-gray-300 border-gray-800"
+                    }`}
+                  >
+                    Grupo 1 (Apenas Cifras)
+                  </button>
+                  <button
+                    onClick={() => setModoVisualizacao("grupo2")}
+                    className={`py-1.5 text-[10px] font-bold rounded-lg border transition ${
+                      modoVisualizacao === "grupo2"
+                        ? "bg-amber-500 text-black border-amber-500"
+                        : "bg-[#161B26] text-gray-300 border-gray-800"
+                    }`}
+                  >
+                    Grupo 2 (Apenas Intocável)
+                  </button>
                 </div>
               </div>
 
-              {/* Botões Rápidos por Instrumento */}
+              {/* Atalhos por Instrumento */}
               <div>
                 <label className="text-[10px] text-gray-400 font-bold block mb-1">
-                  Transpor Direto Para Instrumento:
+                  Transpor Grupo 1 Direto Para:
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                   {INSTRUMENTOS_PRESET.map((inst) => (
@@ -411,8 +460,8 @@ E|---------------------------------------|`;
               {/* Seletores de Tom */}
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 block mb-1">
-                    Tom Reconhecido no Arquivo:
+                  <label className="text-[10px] text-gray-400 font-bold block mb-1">
+                    Tom Reconhecido:
                   </label>
                   <select
                     value={tomReconhecido}
@@ -421,7 +470,7 @@ E|---------------------------------------|`;
                       setTomReconhecido(novo);
                       if (instrumentoId === "original") setTomDesejado(novo);
                     }}
-                    className="w-full bg-[#161B26] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 outline-none focus:border-red-500"
+                    className="w-full bg-[#161B26] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 outline-none"
                   >
                     {TONS_DISPONIVEIS.map((t) => (
                       <option key={`orig-${t}`} value={t} className="bg-[#10131C] text-white">
@@ -432,8 +481,8 @@ E|---------------------------------------|`;
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold text-amber-400 block mb-1">
-                    Novo Tom Desejado:
+                  <label className="text-[10px] text-amber-400 font-bold block mb-1">
+                    Novo Tom Desejado (Grupo 1):
                   </label>
                   <select
                     value={tomDesejado}
@@ -441,7 +490,7 @@ E|---------------------------------------|`;
                       setTomDesejado(e.target.value);
                       setInstrumentoId("custom");
                     }}
-                    className="w-full bg-[#161B26] border border-amber-500/50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-amber-400 outline-none focus:border-amber-400"
+                    className="w-full bg-[#161B26] border border-amber-500/50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-amber-400 outline-none"
                   >
                     {TONS_DISPONIVEIS.map((t) => (
                       <option key={`dest-${t}`} value={t} className="bg-[#10131C] text-white">
@@ -456,22 +505,21 @@ E|---------------------------------------|`;
             {/* Editor de Texto Opcional */}
             {isEditing && (
               <div className="bg-[#0F121A] p-3 rounded-xl border border-gray-700 space-y-2">
-                <span className="text-xs font-bold text-amber-400">Texto Extraído / Editável:</span>
+                <span className="text-xs font-bold text-amber-400">Texto Base dos Grupos:</span>
                 <textarea
                   value={documentoTexto}
                   onChange={(e) => setDocumentoTexto(e.target.value)}
                   className="w-full h-44 bg-[#080A0F] border border-gray-800 rounded-lg p-2.5 font-mono text-xs text-gray-200 outline-none"
-                  placeholder="Ajuste o texto da cifra aqui..."
                 />
               </div>
             )}
 
-            {/* DOCUMENTO FINAL RENDERIZADO (TABLATURA INTACTA, APENAS CIFRAS TRANSPOSTAS) */}
+            {/* DOCUMENTO FINAL RENDERIZADO (SEGUINDO O MODELO DE 3 PAINÉIS / GRUPOS) */}
             <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans print:shadow-none print:border-none print:p-0">
               <div className="space-y-1 font-mono text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
                 {documentoTexto.split("\n").map((linha, index) => (
                   <div key={index} className="min-h-[1.2rem]">
-                    {renderizarLinhaBlindada(linha, deltaSemitons, preferirBemol)}
+                    {renderizarLinhaPorGrupos(linha, deltaSemitons, preferirBemol, modoVisualizacao)}
                   </div>
                 ))}
               </div>
