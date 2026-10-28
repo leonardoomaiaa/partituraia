@@ -41,17 +41,17 @@ interface StaffSystem {
 function LeitorRoute() {
   const navigate = useNavigate();
 
-  // Estados de Exibição da Imagem Enviada
+  // Estados de Imagem
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [scoreTitle, setScoreTitle] = useState<string>("Partitura Carregada");
+  const [scoreTitle, setScoreTitle] = useState<string>("Carregar Partitura");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Sistemas e Pentagramas
+  // Pentagramas e Posições
   const [systems, setSystems] = useState<StaffSystem[]>([]);
   const [currentSystemIndex, setCurrentSystemIndex] = useState(0);
   const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
 
-  // Estados de Reprodução & Metrônomo
+  // Estados de Reprodução
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(100);
   const [transposeSemi, setTransposeSemi] = useState(0);
@@ -60,12 +60,11 @@ function LeitorRoute() {
   const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("piano");
   const [showMixer, setShowMixer] = useState(false);
 
-  // Cursor Vermelho PlayScore
-  const [cursorX, setCursorX] = useState(15);
-  const [currentBeat, setCurrentBeat] = useState(0);
+  // Cursor Vermelho
+  const [cursorX, setCursorX] = useState(18);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const playbackTimerRef = useRef<any>(null);
+  const playbackTimerRef = useRef<number | null>(null);
 
   const pitchMap: Record<string, number> = {
     "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "G3": 196.00, "A3": 220.00, "B3": 246.94,
@@ -75,12 +74,10 @@ function LeitorRoute() {
     "G5": 783.99, "A5": 880.00, "Bb5": 932.33, "B5": 987.77, "C6": 1046.50
   };
 
-  // Mapeia e divide visualmente a imagem recém-carregada em pentagramas dinâmicos
   const setupScoreSystems = (title: string) => {
     setIsProcessing(true);
 
-    // Cria as marcações para os pentagramas da nova imagem
-    const dynamicSystems: StaffSystem[] = [
+    const generatedSystems: StaffSystem[] = [
       {
         id: 1,
         topPercent: 14.0,
@@ -139,18 +136,17 @@ function LeitorRoute() {
     ];
 
     setTimeout(() => {
-      setSystems(dynamicSystems);
+      setSystems(generatedSystems);
       setCurrentSystemIndex(0);
       setCurrentNoteIndex(0);
-      setCursorX(dynamicSystems[0].notes[0].xPercent);
+      setCursorX(generatedSystems[0].notes[0].xPercent);
       setIsProcessing(false);
-      toast.success("Nova partitura carregada!", {
-        description: `Exibindo e mapeando: ${title}`,
+      toast.success("Partitura carregada com sucesso!", {
+        description: `A exibir: ${title}`,
       });
-    }, 400);
+    }, 350);
   };
 
-  // Carregamento limpo de ficheiro (foto ou scan)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -161,13 +157,11 @@ function LeitorRoute() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      // Define a nova imagem real no estado imediatamente
       setImagePreview(dataUrl);
       setupScoreSystems(cleanTitle);
     };
     reader.readAsDataURL(file);
 
-    // Reseta o input para permitir selecionar o mesmo ficheiro novamente se desejar
     e.target.value = "";
   };
 
@@ -218,6 +212,13 @@ function LeitorRoute() {
     }
   };
 
+  const stopPlayback = () => {
+    if (playbackTimerRef.current !== null) {
+      window.clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+  };
+
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
@@ -234,11 +235,10 @@ function LeitorRoute() {
     setCursorX(note.xPercent);
     setCurrentSystemIndex(sIdx);
     setCurrentNoteIndex(nIdx);
-    setCurrentBeat((prev) => (prev + 1) % 4);
 
     playSynthesizedTone(note.frequency, durationSec);
 
-    playbackTimerRef.current = setTimeout(() => {
+    playbackTimerRef.current = window.setTimeout(() => {
       if (nIdx < currentStaff.notes.length - 1) {
         playStep(sIdx, nIdx + 1);
       } else {
@@ -255,16 +255,16 @@ function LeitorRoute() {
     if (isPlaying && systems.length > 0) {
       playStep(currentSystemIndex, currentNoteIndex);
     } else {
-      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+      stopPlayback();
     }
     return () => {
-      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+      stopPlayback();
     };
-  }, [isPlaying, bpm, transposeSemi, instrument, isMuted, volume, systems]);
+  }, [isPlaying, bpm, transposeSemi, instrument, isMuted, volume]);
 
   const handleReset = () => {
     setIsPlaying(false);
-    if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+    stopPlayback();
     setCurrentSystemIndex(0);
     setCurrentNoteIndex(0);
     if (systems[0]?.notes[0]) {
@@ -278,4 +278,70 @@ function LeitorRoute() {
   return (
     <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
       {/* Topo / Barra Superior */}
-      <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-
+      <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate({ to: "/" })}
+            className="text-gray-400 hover:text-white h-8 w-8"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h1 className="text-xs font-bold flex items-center gap-1.5 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              {scoreTitle}
+            </h1>
+            <p className="text-[10px] text-gray-400 font-mono">
+              {imagePreview
+                ? `Pentagrama ${currentSystemIndex + 1}/${systems.length || 1} • Nota: ${activeNote ? activeNote.noteName : "--"}`
+                : "Aguardando carregamento de partitura"}
+            </p>
+          </div>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowMixer(!showMixer)}
+          className={`border-gray-700 h-7 px-2.5 text-[11px] flex items-center gap-1.5 ${
+            showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
+          }`}
+        >
+          <SlidersHorizontal className="w-3 h-3" />
+          <span>Mixer</span>
+        </Button>
+      </header>
+
+      {/* Área Central: Caixa de Upload OU Imagem Real Selecionada */}
+      <main className="flex-1 relative flex items-center justify-center p-3 overflow-hidden bg-[#050608]">
+        {!imagePreview ? (
+          <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl">
+            <div className="p-3.5 rounded-full bg-emerald-500/10 text-emerald-400 mb-3">
+              <FileMusic className="w-8 h-8" />
+            </div>
+            <h2 className="text-sm font-semibold mb-1 text-white">Carregar Partitura</h2>
+            <p className="text-[11px] text-gray-400 mb-4 max-w-xs leading-relaxed">
+              Fotografe com a câmara ou selecione uma imagem do seu computador para iniciar a leitura.
+            </p>
+            <label className="cursor-pointer">
+              <Button asChild size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-black font-semibold shadow-lg">
+                <span className="flex items-center gap-1.5">
+                  <Upload className="w-3.5 h-3.5" /> Selecionar Imagem
+                </span>
+              </Button>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="relative w-full max-w-xl max-h-[76vh] h-full rounded-md overflow-hidden border border-gray-800 bg-white flex items-center justify-center shadow-2xl">
+            <img
+              src={imagePreview}
+              alt="Partitura Selecionada"
+              className="w-full h-full object-contain pointer
