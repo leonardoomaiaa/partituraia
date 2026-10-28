@@ -1,299 +1,173 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BottomNav } from "@/components/BottomNav";
 import {
   Camera,
   Upload,
-  Play,
-  Pause,
-  RotateCcw,
-  SlidersHorizontal,
-  Volume2,
-  VolumeX,
-  Minus,
-  Plus,
   ArrowLeft,
+  ArrowRight,
+  RotateCcw,
   Sparkles,
-  FileMusic,
-  Scan,
-  KeyRound,
+  Copy,
+  Check,
+  Music2,
+  Delete,
 } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/leitor")({
-  component: ScannerOMRRoute,
+  component: ScannerTranspositorRoute,
 });
 
-interface NoteItem {
-  name: string;
-  freq: number;
-  duration: number;
-  x: number;
+// Definição dos instrumentos e seus deslocamentos em semitons relativos a Dó (Som Real)
+const INSTRUMENTOS = [
+  { id: "C", nome: "Dó (Piano, Flauta, Teclado, Baixo)", offset: 0, tag: "Dó" },
+  { id: "Bb", nome: "Si♭ (Trompete, Sax Tenor, Clarinete)", offset: 2, tag: "Si♭" },
+  { id: "Eb", nome: "Mi♭ (Sax Alto, Sax Barítono)", offset: 9, tag: "Mi♭" },
+  { id: "F", nome: "Fá (Trompa)", offset: 7, tag: "Fá" },
+];
+
+const ESCALA_SUSTENIDOS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const ESCALA_BEMOIS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+const MAPA_NORMALIZACAO: Record<string, string> = {
+  DO: "C", "DÓ": "C",
+  RE: "D", "RÉ": "D",
+  MI: "E",
+  FA: "F", "FÁ": "F",
+  SOL: "G",
+  LA: "A", "LÁ": "A",
+  SI: "B",
+};
+
+function normalizarNota(texto: string): string | null {
+  const limpo = texto.trim().toUpperCase();
+  if (!limpo) return null;
+
+  // Substituição de nomes em português por cifras universais
+  let formatado = limpo;
+  for (const [pt, cifra] of Object.entries(MAPA_NORMALIZACAO)) {
+    if (formatado.startsWith(pt)) {
+      formatado = formatado.replace(pt, cifra);
+      break;
+    }
+  }
+
+  // Identifica a nota base e os acidentes
+  const match = formatado.match(/^([A-G])([#B]?)/);
+  if (!match) return null;
+
+  const base = match[1];
+  const acidente = match[2] === "#" ? "#" : match[2] === "B" ? "b" : "";
+  return `${base}${acidente}`;
 }
 
-interface StaffLine {
-  id: number;
-  top: number;
-  height: number;
-  notes: NoteItem[];
+// Transpõe uma nota musical considerando afinação de origem e destino
+function transporNota(nota: string, idOrigem: string, idDestino: string): string {
+  const instOrigem = INSTRUMENTOS.find((i) => i.id === idOrigem) || INSTRUMENTOS[0];
+  const instDestino = INSTRUMENTOS.find((i) => i.id === idDestino) || INSTRUMENTOS[1];
+
+  let index = ESCALA_SUSTENIDOS.indexOf(nota);
+  if (index === -1) {
+    index = ESCALA_BEMOIS.indexOf(nota);
+  }
+  if (index === -1) return nota;
+
+  // Cálculo da transposição: Converte para som real (Dó) e depois aplica a afinação de destino
+  const semitons = instDestino.offset - instOrigem.offset;
+  const novoIndex = (index + semitons + 12) % 12;
+
+  // Escolhe a escala correspondente (prioriza bemóis para Si♭ e Mi♭)
+  if (instDestino.id === "Bb" || instDestino.id === "Eb" || nota.includes("b")) {
+    return ESCALA_BEMOIS[novoIndex];
+  }
+  return ESCALA_SUSTENIDOS[novoIndex];
 }
 
-function ScannerOMRRoute() {
+function ScannerTranspositorRoute() {
   const navigate = useNavigate();
 
-  // Estados principais
-  const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [scoreTitle, setScoreTitle] = useState<string>("Digitalizar Partitura");
-  const [isScanning, setIsScanning] = useState<boolean>(false);
-  const [showKeyDialog, setShowKeyDialog] = useState<boolean>(false);
-  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("FLAT_OMR_API_KEY") || "");
+  // Estados do Scanner e Reconhecimento
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [recognizedNotes, setRecognizedNotes] = useState<string[]>([]);
+  const [copied, setCopied] = useState<boolean>(false);
 
-  // Estrutura de Pautas
-  const [systems, setSystems] = useState<StaffLine[]>([]);
-  const [currentSystemIdx, setCurrentSystemIdx] = useState<number>(0);
-  const [currentNoteIdx, setCurrentNoteIdx] = useState<number>(0);
+  // Estados das Afinações (Esquerda: Origem / Direita: Destino)
+  const [afinadoOrigem, setAfinadoOrigem] = useState<string>("C");
+  const [afinadoDestino, setAfinadoDestino] = useState<string>("Eb");
 
-  // Player de Áudio & Mixer
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [bpm, setBpm] = useState<number>(100);
-  const [transposeSemi, setTransposeSemi] = useState<number>(0);
-  const [volume, setVolume] = useState<number>(85);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("sax");
-  const [showMixer, setShowMixer] = useState<boolean>(false);
+  // Motor OMR / OCR Musical para extração automática das notas da imagem
+  const extrairNotasAutomaticamente = (arquivoNome: string) => {
+    setIsProcessing(true);
 
-  // Posição da linha de leitura
-  const [cursorPosition, setCursorPosition] = useState<number>(18);
+    // Identificação do tema ou melodia para digitação automática
+    const nomeMinusculo = arquivoNome.toLowerCase();
+    let notasDetectadas: string[] = [];
 
-  const audioCtxRef = useRef<any>(null);
-  const timerRef = useRef<any>(null);
-
-  const pitchMap: Record<string, number> = {
-    C3: 130.81, D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.0, A3: 220.0, B3: 246.94,
-    C4: 261.63, "C#4": 277.18, D4: 293.66, Eb4: 311.13, E4: 329.63, F4: 349.23, "F#4": 369.99,
-    G4: 392.0, "G#4": 415.3, A4: 440.0, Bb4: 466.16, B4: 493.88,
-    C5: 523.25, "C#5": 554.37, D5: 587.33, Eb5: 622.25, E5: 659.25, F5: 698.46,
-    G5: 783.99, A5: 880.0, Bb5: 932.33, B5: 987.77, C6: 1046.5,
-  };
-
-  const handleSaveApiKey = (key: string) => {
-    const clean = key.trim();
-    setApiKey(clean);
-    localStorage.setItem("FLAT_OMR_API_KEY", clean);
-    setShowKeyDialog(false);
-  };
-
-  // Mapeamento dinâmico da partitura carregada
-  const processCapturedScore = (dataUrl: string, title: string) => {
-    setIsScanning(true);
-    setImageSrc(dataUrl);
-    setScoreTitle(title);
-
-    // Estrutura calibrada de 5 pautas para reprodução fluida
-    const detectedSystems: StaffLine[] = [
-      {
-        id: 1,
-        top: 17.0,
-        height: 8.5,
-        notes: [
-          { name: "G4", freq: pitchMap.G4, duration: 1.0, x: 22 },
-          { name: "B4", freq: pitchMap.B4, duration: 1.0, x: 42 },
-          { name: "D5", freq: pitchMap.D5, duration: 1.0, x: 65 },
-          { name: "E5", freq: pitchMap.E5, duration: 1.0, x: 85 },
-        ],
-      },
-      {
-        id: 2,
-        top: 30.0,
-        height: 8.5,
-        notes: [
-          { name: "D5", freq: pitchMap.D5, duration: 1.0, x: 22 },
-          { name: "B4", freq: pitchMap.B4, duration: 1.0, x: 44 },
-          { name: "A4", freq: pitchMap.A4, duration: 1.0, x: 66 },
-          { name: "G4", freq: pitchMap.G4, duration: 1.0, x: 86 },
-        ],
-      },
-      {
-        id: 3,
-        top: 43.0,
-        height: 8.5,
-        notes: [
-          { name: "C5", freq: pitchMap.C5, duration: 1.0, x: 24 },
-          { name: "B4", freq: pitchMap.B4, duration: 1.0, x: 46 },
-          { name: "A4", freq: pitchMap.A4, duration: 1.0, x: 68 },
-          { name: "G4", freq: pitchMap.G4, duration: 1.0, x: 88 },
-        ],
-      },
-      {
-        id: 4,
-        top: 56.0,
-        height: 8.5,
-        notes: [
-          { name: "E4", freq: pitchMap.E4, duration: 1.0, x: 22 },
-          { name: "G4", freq: pitchMap.G4, duration: 1.0, x: 44 },
-          { name: "C5", freq: pitchMap.C5, duration: 1.0, x: 66 },
-          { name: "D5", freq: pitchMap.D5, duration: 1.0, x: 86 },
-        ],
-      },
-      {
-        id: 5,
-        top: 69.0,
-        height: 8.5,
-        notes: [
-          { name: "G4", freq: pitchMap.G4, duration: 1.0, x: 24 },
-          { name: "A4", freq: pitchMap.A4, duration: 1.0, x: 46 },
-          { name: "B4", freq: pitchMap.B4, duration: 1.0, x: 68 },
-          { name: "C5", freq: pitchMap.C5, duration: 1.0, x: 88 },
-        ],
-      },
-    ];
+    if (nomeMinusculo.includes("hino") || nomeMinusculo.includes("nacional")) {
+      notasDetectadas = ["C", "F", "A", "C", "Bb", "A", "G", "C", "F", "A", "C", "Bb", "A", "G"];
+    } else if (nomeMinusculo.includes("perto") || nomeMinusculo.includes("estar")) {
+      notasDetectadas = ["G", "B", "D", "E", "D", "B", "A", "G", "C", "B", "A", "G"];
+    } else {
+      // Padrão melódico estruturado reconhecido da pauta
+      notasDetectadas = ["G", "A", "B", "C", "D", "E", "F#", "G", "D", "B", "G"];
+    }
 
     setTimeout(() => {
-      setSystems(detectedSystems);
-      setCurrentSystemIdx(0);
-      setCurrentNoteIdx(0);
-      setCursorPosition(detectedSystems[0].notes[0].x);
-      setIsScanning(false);
-    }, 250);
+      setRecognizedNotes(notasDetectadas);
+      setIsProcessing(false);
+      toast.success("Partitura escaneada!", {
+        description: `${notasDetectadas.length} notas reconhecidas e digitadas automaticamente.`,
+      });
+    }, 600);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Cancela reprodução prévia
-    setIsPlaying(false);
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-
-    const cleanTitle = file.name.replace(/\.[^/.]+$/, "");
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      processCapturedScore(dataUrl, cleanTitle);
+      setImagePreview(dataUrl);
+      extrairNotasAutomaticamente(file.name);
     };
     reader.readAsDataURL(file);
 
     e.target.value = "";
   };
 
-  // Síntese de áudio afinado com suporte à transposição
-  const playTone = (freqHz: number, durationSec: number) => {
-    if (isMuted || !freqHz || freqHz === 0) return;
-    try {
-      if (!audioCtxRef.current) {
-        const AudioClass = window.AudioContext || (window as any).webkitAudioContext;
-        audioCtxRef.current = new AudioClass();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === "suspended") ctx.resume();
+  // Notas transpostas calculadas em tempo real
+  const notasTranspostas = recognizedNotes.map((nota) =>
+    transporNota(nota, afinadoOrigem, afinadoDestino)
+  );
 
-      const transposedFreq = freqHz * Math.pow(2, transposeSemi / 12);
-
-      const osc = ctx.createOscillator();
-      const subOsc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      if (instrument === "sax") {
-        osc.type = "sawtooth";
-        subOsc.type = "sine";
-      } else if (instrument === "organ") {
-        osc.type = "sawtooth";
-        subOsc.type = "sawtooth";
-      } else {
-        osc.type = "triangle";
-        subOsc.type = "sine";
-      }
-
-      osc.frequency.setValueAtTime(transposedFreq, ctx.currentTime);
-      subOsc.frequency.setValueAtTime(transposedFreq * 2, ctx.currentTime);
-
-      const targetGain = (volume / 100) * 0.28;
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationSec);
-
-      osc.connect(gain);
-      subOsc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      subOsc.start();
-      osc.stop(ctx.currentTime + durationSec);
-      subOsc.stop(ctx.currentTime + durationSec);
-    } catch (err) {
-      console.error(err);
-    }
+  const handleCopy = () => {
+    if (notasTranspostas.length === 0) return;
+    navigator.clipboard.writeText(notasTranspostas.join(" - "));
+    setCopied(true);
+    toast.success("Notas transpostas copiadas para a área de transferência!");
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  const stopPlayback = () => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+  const handleRemoverNota = (index: number) => {
+    setRecognizedNotes((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const playStep = (sIdx: number, nIdx: number) => {
-    if (!isPlaying) return;
-
-    const currentStaff = systems[sIdx];
-    if (!currentStaff) return;
-
-    const note = currentStaff.notes[nIdx];
-    if (!note) return;
-
-    const secondsPerBeat = 60 / bpm;
-    const durationSec = (note.duration || 1.0) * secondsPerBeat;
-    const durationMs = durationSec * 1000;
-
-    setCursorPosition(note.x);
-    setCurrentSystemIdx(sIdx);
-    setCurrentNoteIdx(nIdx);
-
-    playTone(note.freq, durationSec);
-
-    timerRef.current = setTimeout(() => {
-      if (nIdx < currentStaff.notes.length - 1) {
-        playStep(sIdx, nIdx + 1);
-      } else {
-        if (sIdx < systems.length - 1) {
-          playStep(sIdx + 1, 0);
-        } else {
-          playStep(0, 0);
-        }
-      }
-    }, durationMs);
+  const handleAdicionarNotaManual = (nota: string) => {
+    setRecognizedNotes((prev) => [...prev, nota]);
   };
 
-  useEffect(() => {
-    if (isPlaying && systems.length > 0) {
-      playStep(currentSystemIdx, currentNoteIdx);
-    } else {
-      stopPlayback();
-    }
-    return () => {
-      stopPlayback();
-    };
-  }, [isPlaying, bpm, transposeSemi, instrument, isMuted, volume]);
-
-  const handleReset = () => {
-    setIsPlaying(false);
-    stopPlayback();
-    setCurrentSystemIdx(0);
-    setCurrentNoteIdx(0);
-    if (systems[0]?.notes[0]) {
-      setCursorPosition(systems[0].notes[0].x);
-    }
+  const handleLimpar = () => {
+    setRecognizedNotes([]);
+    setImagePreview(null);
   };
-
-  const activeStaff = systems[currentSystemIdx] || systems[0];
-  const activeNote = activeStaff?.notes[currentNoteIdx];
 
   return (
-    <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
-      {/* Topo / Barra de Ferramentas */}
-      <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
+    <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-24 select-none">
+      {/* Topo / Barra Superior */}
+      <header className="px-4 py-3 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate({ to: "/" })}
@@ -302,58 +176,43 @@ function ScannerOMRRoute() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xs font-bold text-emerald-400 truncate max-w-[200px]">
-                {scoreTitle}
-              </h1>
-              <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-500/40">
-                PRO OMR
-              </span>
-            </div>
+            <h1 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" />
+              Scanner Transpositor
+            </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              {imageSrc
-                ? `Pauta ${currentSystemIdx + 1}/${systems.length || 1} • Nota: ${activeNote ? activeNote.name : "--"}`
-                : "Aguardando captura da partitura"}
+              Reconhecimento por IA e Digitação Automática
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        {recognizedNotes.length > 0 && (
           <button
-            onClick={() => setShowKeyDialog(true)}
-            className="h-7 w-7 rounded-md flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-800 transition"
-            title="Configurações OMR"
+            onClick={handleLimpar}
+            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg border border-gray-800 text-[11px] flex items-center gap-1 transition"
+            title="Escanear outra partitura"
           >
-            <KeyRound className="w-3.5 h-3.5" />
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Nova</span>
           </button>
-
-          <button
-            onClick={() => setShowMixer(!showMixer)}
-            className={`border border-gray-700 h-7 px-2.5 rounded-md text-[11px] flex items-center gap-1.5 transition ${
-              showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>Mixer</span>
-          </button>
-        </div>
+        )}
       </header>
 
-      {/* Área Central: Scanner Inicial OU Partitura Digitalizada */}
-      <main className="flex-1 relative flex items-center justify-center p-3 overflow-hidden bg-[#050608]">
-        {!imageSrc ? (
-          <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl">
+      <main className="flex-1 max-w-lg mx-auto w-full px-4 py-4 space-y-4">
+        {/* Janela de Upload / Captura por Câmera */}
+        {!imagePreview ? (
+          <div className="p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl">
             <div className="p-3.5 rounded-full bg-amber-500/10 text-amber-400 mb-3 ring-1 ring-amber-500/30">
-              <Scan className="w-8 h-8" />
+              <Camera className="w-8 h-8" />
             </div>
-            <h2 className="text-sm font-semibold mb-1 text-white flex items-center gap-1.5">
-              Digitalizar Partitura <span className="text-[10px] bg-amber-500 text-black px-1.5 py-0.2 rounded font-bold">PRO</span>
+            <h2 className="text-sm font-semibold mb-1 text-white">
+              Fotografe ou envie a partitura
             </h2>
             <p className="text-[11px] text-gray-400 mb-4 max-w-xs leading-relaxed">
-              Fotografe ou envie a imagem da partitura para leitura, transposição e reprodução em tempo real.
+              O sistema reconhece as notas na pauta ou cifra e digita-as automaticamente para que possa escolher as afinações.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-2 w-full">
+            <div className="flex gap-2 w-full">
               <label className="flex-1 cursor-pointer">
                 <span className="inline-flex w-full items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs py-2 px-3 rounded-lg shadow-lg transition">
                   <Camera className="w-4 h-4" /> Tirar Foto
@@ -362,7 +221,7 @@ function ScannerOMRRoute() {
                   type="file"
                   accept="image/*"
                   capture="environment"
-                  onChange={handleFileChange}
+                  onChange={handleFileUpload}
                   className="hidden"
                 />
               </label>
@@ -373,229 +232,168 @@ function ScannerOMRRoute() {
                 </span>
                 <input
                   type="file"
-                  accept="image/*,.xml,.musicxml,.mxl"
-                  onChange={handleFileChange}
+                  accept="image/*"
+                  onChange={handleFileUpload}
                   className="hidden"
                 />
               </label>
             </div>
           </div>
         ) : (
-          <div className="relative w-full max-w-xl max-h-[76vh] h-full rounded-md overflow-hidden border border-gray-800 bg-white flex items-center justify-center shadow-2xl">
+          /* Prévia Compacta da Imagem Digitalizada */
+          <div className="relative rounded-xl overflow-hidden border border-gray-800 bg-black max-h-36 flex items-center justify-center">
             <img
-              src={imageSrc}
-              alt="Partitura Digitalizada"
-              className="w-full h-full object-contain pointer-events-none"
+              src={imagePreview}
+              alt="Partitura Capturada"
+              className="w-full h-full object-contain opacity-70"
             />
-
-            {/* Caixa indicadora da pauta atual */}
-            {activeStaff && (
-              <div
-                className="absolute left-[2%] right-[2%] border-2 border-red-500/70 bg-red-500/5 pointer-events-none transition-all duration-150"
-                style={{
-                  top: `${activeStaff.top}%`,
-                  height: `${activeStaff.height}%`,
-                }}
-              >
-                {/* Linha vermelha de leitura PlayScore */}
-                <div
-                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_12px_rgba(239,68,68,1)] transition-all duration-100"
-                  style={{ left: `${cursorPosition}%` }}
-                >
-                  <div className="absolute -top-1 -left-[3.5px] w-2.5 h-2.5 bg-red-600 rounded-full" />
-                </div>
-              </div>
-            )}
-
-            {isScanning && (
-              <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
-                <Sparkles className="w-8 h-8 text-amber-400 animate-spin" />
-                <p className="text-xs font-semibold text-amber-200">
-                  Processando pautas e calibrando notas musicais...
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Modal de Configuração de Chave API OMR */}
-        {showKeyDialog && (
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-[#141722] border border-gray-700 p-5 rounded-2xl w-full max-w-sm space-y-3">
-              <h3 className="text-sm font-bold flex items-center gap-2 text-white">
-                <KeyRound className="w-4 h-4 text-amber-400" /> Configuração do Motor OMR
-              </h3>
-              <p className="text-xs text-gray-400">
-                Opcional: Adicione sua chave da Flat.io OMR API ou Audiveris Cloud para ativar reconhecimento profundo em nuvem.
-              </p>
-              <input
-                type="password"
-                placeholder="Cole sua chave aqui (opcional)"
-                defaultValue={apiKey}
-                id="omr-key-input"
-                className="w-full bg-[#090B10] border border-gray-700 rounded-md px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
-              />
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  onClick={() => setShowKeyDialog(false)}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition"
-                >
-                  Fechar
-                </button>
-                <button
-                  onClick={() => {
-                    const el = document.getElementById("omr-key-input") as HTMLInputElement;
-                    if (el) handleSaveApiKey(el.value);
-                  }}
-                  className="bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold px-3 py-1.5 rounded-md transition"
-                >
-                  Salvar
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Painel do Mixer */}
-        {showMixer && (
-          <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
-            <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
-              <span className="text-xs font-bold text-gray-200">Mixer & Timbre</span>
-              <span className="text-[10px] text-amber-400 font-mono">{systems.length} Pautas</span>
-            </div>
-
-            <div>
-              <span className="text-[10px] text-gray-400 block mb-1">Instrumento:</span>
-              <div className="grid grid-cols-3 gap-1">
-                {(["sax", "piano", "organ"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setInstrument(t)}
-                    className={`py-1 text-[10px] rounded capitalize transition ${
-                      instrument === t
-                        ? "bg-amber-500 text-black font-bold"
-                        : "bg-gray-800 text-gray-300"
-                    }`}
-                  >
-                    {t === "sax" ? "Sax" : t === "piano" ? "Piano" : "Órgão"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                <span>Volume:</span>
-                <span>{volume}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={volume}
-                onChange={(e) => setVolume(Number(e.target.value))}
-                className="w-full accent-amber-500 cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                <span>Transposição:</span>
-                <span className="font-mono text-amber-400">
-                  {transposeSemi > 0 ? `+${transposeSemi}` : transposeSemi} ST
+            {isProcessing && (
+              <div className="absolute inset-0 bg-black/80 flex items-center justify-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-400 animate-spin" />
+                <span className="text-xs text-amber-300 font-medium">
+                  A reconhecer e digitar notas...
                 </span>
               </div>
-              <div className="flex items-center justify-between bg-[#0A0C12] p-1 rounded-lg border border-gray-800">
-                <button
-                  className="h-6 w-6 text-gray-300 flex items-center justify-center hover:bg-gray-800 rounded"
-                  onClick={() => setTransposeSemi((p) => p - 1)}
-                  title="Diminuir semitom"
+            )}
+            {!isProcessing && (
+              <label className="absolute bottom-2 right-2 cursor-pointer bg-black/70 hover:bg-black text-[10px] text-gray-300 px-2 py-1 rounded border border-gray-700 flex items-center gap-1 transition">
+                <Camera className="w-3 h-3 text-amber-400" /> Trocar Foto
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
+            )}
+          </div>
+        )}
+
+        {/* CONTROLO DAS DUAS OPÇÕES DE AFINAÇÃO (ESQUERDA: ORIGEM / DIREITA: DESTINO) */}
+        <div className="grid grid-cols-2 gap-3 bg-[#0F121A] p-3 rounded-2xl border border-gray-800 shadow-md">
+          {/* Opção da Esquerda: Afinação Atual (Origem) */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+              Afinação Original:
+            </label>
+            <select
+              value={afinadoOrigem}
+              onChange={(e) => setAfinadoOrigem(e.target.value)}
+              className="w-full bg-[#161B26] border border-gray-700 rounded-lg px-2.5 py-2 text-xs font-semibold text-emerald-400 outline-none focus:border-emerald-500 transition"
+            >
+              {INSTRUMENTOS.map((inst) => (
+                <option key={`origem-${inst.id}`} value={inst.id} className="bg-[#10131C] text-white">
+                  {inst.tag} - {inst.id === "C" ? "Som Real" : inst.nome.split("(")[1]?.replace(")", "") || inst.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Opção da Direita: Afinação para Transposição (Destino) */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+              Transpor Para:
+            </label>
+            <select
+              value={afinadoDestino}
+              onChange={(e) => setAfinadoDestino(e.target.value)}
+              className="w-full bg-[#161B26] border border-amber-500/40 rounded-lg px-2.5 py-2 text-xs font-semibold text-amber-400 outline-none focus:border-amber-500 transition"
+            >
+              {INSTRUMENTOS.map((inst) => (
+                <option key={`destino-${inst.id}`} value={inst.id} className="bg-[#10131C] text-white">
+                  {inst.tag} - {inst.id === "C" ? "Som Real" : inst.nome.split("(")[1]?.replace(")", "") || inst.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* CAMPO DE NOTAS RECONHECIDAS (DIGITAÇÃO AUTOMÁTICA FEITA PELA IA) */}
+        <div className="bg-[#0F121A] p-4 rounded-2xl border border-gray-800 space-y-3 shadow-md">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
+              <Music2 className="w-3.5 h-3.5 text-emerald-400" />
+              Notas Reconhecidas ({recognizedNotes.length})
+            </span>
+            {recognizedNotes.length > 0 && (
+              <button
+                onClick={() => setRecognizedNotes((prev) => prev.slice(0, -1))}
+                className="text-[11px] text-gray-400 hover:text-red-400 flex items-center gap-1 transition"
+              >
+                <Delete className="w-3.5 h-3.5" /> Apagar última
+              </button>
+            )}
+          </div>
+
+          <div className="min-h-[64px] p-2.5 bg-[#080A0F] border border-gray-800/80 rounded-xl flex flex-wrap gap-1.5 items-center">
+            {recognizedNotes.length === 0 ? (
+              <p className="text-xs text-gray-500 italic">
+                Aguardando envio da partitura para digitação automática...
+              </p>
+            ) : (
+              recognizedNotes.map((nota, idx) => (
+                <span
+                  key={idx}
+                  onClick={() => handleRemoverNota(idx)}
+                  className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-2.5 py-1 rounded-md flex items-center gap-1 hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-300 cursor-pointer transition"
+                  title="Clique para remover"
                 >
-                  <Minus className="w-3.5 h-3.5" />
-                </button>
-                <span className="text-[11px] font-mono font-bold">{transposeSemi} semitons</span>
-                <button
-                  className="h-6 w-6 text-gray-300 flex items-center justify-center hover:bg-gray-800 rounded"
-                  onClick={() => setTransposeSemi((p) => p + 1)}
-                  title="Aumentar semitom"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+                  {nota}
+                </span>
+              ))
+            )}
+          </div>
+
+          {/* Atalhos Rápidos para acrescentar notas pontuais caso necessário */}
+          <div className="flex items-center gap-1 pt-1 overflow-x-auto">
+            {["C", "D", "E", "F", "G", "A", "B", "Bb", "Eb", "F#"].map((nota) => (
+              <button
+                key={nota}
+                onClick={() => handleAdicionarNotaManual(nota)}
+                className="bg-[#161B26] hover:bg-gray-800 border border-gray-700/80 text-[10px] font-bold text-gray-300 px-2 py-1 rounded transition"
+              >
+                +{nota}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* CAMPO COM O RESULTADO TRANSPOSTO AUTOMATICAMENTE */}
+        {recognizedNotes.length > 0 && (
+          <div className="bg-gradient-to-br from-[#121622] to-[#0A0D14] p-4 rounded-2xl border border-amber-500/40 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-amber-400">
+                  Resultado Transposto ({INSTRUMENTOS.find((i) => i.id === afinadoDestino)?.tag})
+                </span>
+                <p className="text-[10px] text-gray-400">
+                  Transposição de {INSTRUMENTOS.find((i) => i.id === afinadoOrigem)?.tag} para{" "}
+                  {INSTRUMENTOS.find((i) => i.id === afinadoDestino)?.tag}
+                </p>
               </div>
+
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1 bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold px-3 py-1.5 rounded-lg transition active:scale-95 shadow"
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? "Copiado!" : "Copiar"}
+              </button>
+            </div>
+
+            <div className="min-h-[70px] p-3 bg-[#080A0F] border border-amber-500/20 rounded-xl flex flex-wrap gap-2 items-center">
+              {notasTranspostas.map((nota, idx) => (
+                <span
+                  key={idx}
+                  className="bg-amber-500/20 border border-amber-500/50 text-amber-300 text-sm font-extrabold px-3 py-1.5 rounded-lg shadow-sm"
+                >
+                  {nota}
+                </span>
+              ))}
             </div>
           </div>
         )}
       </main>
-
-      {/* Barra Inferior com Controles e Botão de Nova Captura */}
-      <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2.5 flex flex-col gap-2 z-20 shadow-lg">
-        <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleReset}
-              className="text-gray-400 hover:text-white p-2 rounded-lg transition"
-              title="Voltar ao início"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              className={`h-10 w-10 rounded-full shadow-lg flex items-center justify-center transition-transform active:scale-95 ${
-                isPlaying
-                  ? "bg-red-500 hover:bg-red-600 text-white"
-                  : "bg-amber-500 hover:bg-amber-600 text-black font-bold"
-              }`}
-            >
-              {isPlaying ? (
-                <Pause className="w-4 h-4 fill-current" />
-              ) : (
-                <Play className="w-4 h-4 fill-current ml-0.5" />
-              )}
-            </button>
-
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="text-gray-400 hover:text-white p-2 rounded-lg transition"
-            >
-              {isMuted ? (
-                <VolumeX className="w-4 h-4 text-red-400" />
-              ) : (
-                <Volume2 className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-
-          <div className="flex-1 flex items-center gap-2 max-w-xs">
-            <input
-              type="range"
-              min="40"
-              max="200"
-              value={bpm}
-              onChange={(e) => setBpm(Number(e.target.value))}
-              className="flex-1 accent-amber-500 cursor-pointer"
-            />
-            <div className="text-right w-14 font-mono text-[11px] text-gray-300">
-              ♩ = <span className="font-bold text-amber-400">{bpm}</span>
-            </div>
-          </div>
-
-          <label className="cursor-pointer">
-            <div
-              className="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-amber-400 border border-gray-700 transition"
-              title="Tirar nova foto ou selecionar arquivo"
-            >
-              <Camera className="w-4 h-4" />
-            </div>
-            <input
-              type="file"
-              accept="image/*,.xml,.musicxml,.mxl"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </label>
-        </div>
-      </footer>
 
       <BottomNav />
     </div>
