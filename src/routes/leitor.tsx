@@ -69,7 +69,7 @@ function LeitorRoute() {
   const [cursorX, setCursorX] = useState(15);
   const [currentBeat, setCurrentBeat] = useState(0);
 
-  const audioCtxRef = useRef<AudioContext null |>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimerRef = useRef<any>(null);
 
   const handleSaveApiKey = (val: string) => {
@@ -80,13 +80,13 @@ function LeitorRoute() {
     toast.success("Chave de API salva com sucesso!");
   };
 
-  // Redimensiona imagem antes do envio para evitar timeout e erro de payload grande
+  // Redimensiona a imagem para evitar estouro de limite de payload
   const compressImageForAI = (dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const maxDim = 1500;
+        const maxDim = 1400;
         let w = img.width;
         let h = img.height;
 
@@ -105,7 +105,7 @@ function LeitorRoute() {
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.85));
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
         } else {
           resolve(dataUrl);
         }
@@ -114,7 +114,7 @@ function LeitorRoute() {
     });
   };
 
-  // Chamada à API de Visão do Gemini
+  // Chamada de Visão da API
   const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
@@ -129,7 +129,7 @@ function LeitorRoute() {
       const cleanBase64 = compressed.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
       const promptText = `Você é um motor especialista em Optical Music Recognition (OMR).
-Analise a partitura na imagem enviada e retorne APENAS um JSON válido no formato abaixo, sem markdown ou texto extra:
+Analise a partitura na imagem enviada e retorne APENAS um JSON válido no formato abaixo, sem formatação markdown ou texto extra:
 {
   "title": "Título da Música",
   "bpm": 100,
@@ -183,10 +183,9 @@ Regras:
       let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (!rawText) {
-        throw new Error("A IA não retornou conteúdo. Verifique se a chave de API está válida.");
+        throw new Error("A IA não retornou dados. Verifique a validade da sua API Key.");
       }
 
-      // Limpeza de blocos markdown
       rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
       const parsed = JSON.parse(rawText);
@@ -228,7 +227,7 @@ Regras:
     }
   };
 
-  // Síntese de Áudio
+  // Síntese de Som
   const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
     if (isMuted || isRest || !freqHz || freqHz === 0) return;
     try {
@@ -276,7 +275,7 @@ Regras:
     }
   };
 
-  // Reprodução Sincronizada
+  // Reprodução Sequencial
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
