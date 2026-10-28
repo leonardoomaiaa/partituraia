@@ -77,7 +77,7 @@ function LeitorRoute() {
     setApiKey(trimmed);
     localStorage.setItem("GEMINI_API_KEY", trimmed);
     setShowKeyModal(false);
-    toast.success("Chave de API salva com sucesso!");
+    toast.success("Chave de API guardada com sucesso!");
   };
 
   const compressImageForAI = (dataUrl: string): Promise<string> => {
@@ -85,7 +85,7 @@ function LeitorRoute() {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const maxDim = 1200; // Otimizado para leitura rápida sem sobrecarga
+        const maxDim = 1200;
         let w = img.width;
         let h = img.height;
 
@@ -104,7 +104,7 @@ function LeitorRoute() {
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.80));
+          resolve(canvas.toDataURL("image/jpeg", 0.8));
         } else {
           resolve(dataUrl);
         }
@@ -113,11 +113,11 @@ function LeitorRoute() {
     });
   };
 
-  // Chamada de Visão da API com Sistema Robusto Anti-Sobrecarga (High Demand Bypass)
+  // Chamada de Visão com Deteção Automática de Modelos Suportados
   const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
-      toast.info("Insira sua chave de API para o reconhecimento inteligente.");
+      toast.info("Insira a sua chave de API para o reconhecimento inteligente.");
       return;
     }
 
@@ -144,26 +144,28 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
   ]
 }
 
-Regras obrigatórias:
-1. "systems": lista de cada pentagrama/sistema presente na folha de cima para baixo.
-2. "topPercent": porcentagem vertical (0-100) onde começa o pentagrama.
+Regras:
+1. "systems": lista de cada pentagrama/sistema da folha de cima para baixo.
+2. "topPercent": percentagem vertical (0-100) onde começa o pentagrama.
 3. "heightPercent": altura vertical (0-100) do pentagrama.
-4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 0.25 = semicolcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
+4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
 
-      // Estratégia de rotação de modelos caso um esteja com alta demanda temporária
-      const endpoints = [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
-        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+      // Modelos testados por ordem de compatibilidade
+      const targetModels = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro-latest"
       ];
 
       let parsed: any = null;
       let lastErrorMessage = "";
 
-      for (const endpoint of endpoints) {
+      for (const model of targetModels) {
         try {
-          const response = await fetch(`${endpoint}?key=${apiKey}`, {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const response = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -185,10 +187,8 @@ Regras obrigatórias:
 
           const data = await response.json();
 
-          // Se deu erro de demanda (503 / alta demanda), tenta o próximo modelo da fila
           if (data.error) {
             lastErrorMessage = data.error.message;
-            console.warn(`Tentando próximo endpoint devido a: ${data.error.message}`);
             continue;
           }
 
@@ -196,7 +196,7 @@ Regras obrigatórias:
           if (rawText) {
             rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
             parsed = JSON.parse(rawText);
-            break; // Sucesso na leitura!
+            break;
           }
         } catch (e: any) {
           lastErrorMessage = e.message;
@@ -204,7 +204,7 @@ Regras obrigatórias:
       }
 
       if (!parsed) {
-        throw new Error(lastErrorMessage || "Servidores ocupados temporariamente. Tente novamente em alguns segundos.");
+        throw new Error(lastErrorMessage || "Não foi possível comunicar com a API do Gemini.");
       }
 
       if (parsed.title) setScoreTitle(parsed.title);
@@ -218,10 +218,10 @@ Regras obrigatórias:
           setCursorX(parsed.systems[0].notes[0].xPercent || 15);
         }
         toast.success("Partitura Interpretada com Sucesso!", {
-          description: `${parsed.systems.length} pentagramas e notas reais reconhecidas.`,
+          description: `${parsed.systems.length} pentagramas reconhecidos pela IA.`,
         });
       } else {
-        throw new Error("Nenhum sistema musical detectado na imagem.");
+        throw new Error("Nenhum sistema musical detetado.");
       }
     } catch (err: any) {
       console.error("Erro na API de Visão:", err);
@@ -244,7 +244,6 @@ Regras obrigatórias:
     }
   };
 
-  // Síntese de Som
   const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
     if (isMuted || isRest || !freqHz || freqHz === 0) return;
     try {
@@ -292,7 +291,6 @@ Regras obrigatórias:
     }
   };
 
-  // Reprodução Sequencial
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
@@ -445,7 +443,7 @@ Regras obrigatórias:
             {isProcessing && (
               <div className="absolute inset-0 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
                 <Sparkles className="w-8 h-8 text-emerald-400 animate-spin" />
-                <p className="text-xs font-semibold text-emerald-200">A IA está decodificando cada compasso e nota...</p>
+                <p className="text-xs font-semibold text-emerald-200">A IA está a descodificar cada compasso e nota...</p>
               </div>
             )}
           </div>
@@ -458,11 +456,11 @@ Regras obrigatórias:
                 <KeyRound className="w-4 h-4 text-emerald-400" /> Chave de Visão Inteligente
               </h3>
               <p className="text-xs text-gray-400">
-                Insira sua chave gratuita da API do Gemini para permitir a análise musical precisa por IA.
+                Insira a sua chave da API do Google AI Studio para permitir a análise musical precisa por IA.
               </p>
               <Input
                 type="password"
-                placeholder="Cole sua API Key aqui"
+                placeholder="Cole a sua API Key aqui"
                 defaultValue={apiKey}
                 id="api-key-input"
                 className="bg-[#090B10] border-gray-700 text-xs text-white"
