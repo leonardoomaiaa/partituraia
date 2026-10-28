@@ -63,7 +63,7 @@ function LeitorRoute() {
   const audioCtxRef = useRef<any>(null);
   const playbackTimerRef = useRef<any>(null);
 
-  const pitchMap: Record<string, number> = {
+  const pitchMap = {
     C3: 130.81,
     D3: 146.83,
     E3: 164.81,
@@ -161,7 +161,7 @@ function LeitorRoute() {
       setSystems(generatedSystems);
       setCurrentSystemIndex(0);
       setCurrentNoteIndex(0);
-      setCursorX(generatedSystems[0].notes[0].xPercent);
+      setCursorX(generatedSystems[0]?.notes[0]?.xPercent ?? 18);
       setIsProcessing(false);
     }, 250);
   };
