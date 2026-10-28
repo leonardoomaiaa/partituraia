@@ -85,7 +85,7 @@ function LeitorRoute() {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const maxDim = 1400;
+        const maxDim = 1200; // Otimizado para leitura rápida sem sobrecarga
         let w = img.width;
         let h = img.height;
 
@@ -104,7 +104,7 @@ function LeitorRoute() {
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.82));
+          resolve(canvas.toDataURL("image/jpeg", 0.80));
         } else {
           resolve(dataUrl);
         }
@@ -113,7 +113,7 @@ function LeitorRoute() {
     });
   };
 
-  // Chamada de Visão da API com Model Fallback
+  // Chamada de Visão da API com Sistema Robusto Anti-Sobrecarga (High Demand Bypass)
   const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
@@ -144,68 +144,67 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
   ]
 }
 
-Regras:
-1. "systems": lista de cada pentagrama/sistema da folha de cima para baixo.
+Regras obrigatórias:
+1. "systems": lista de cada pentagrama/sistema presente na folha de cima para baixo.
 2. "topPercent": porcentagem vertical (0-100) onde começa o pentagrama.
 3. "heightPercent": altura vertical (0-100) do pentagrama.
-4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
+4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 0.25 = semicolcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
 
-      // Lista de modelos suportados para tentar em ordem
-      const candidateModels = [
-        "gemini-2.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro",
-        "gemini-flash-latest"
+      // Estratégia de rotação de modelos caso um esteja com alta demanda temporária
+      const endpoints = [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
       ];
 
-      let lastErrorMsg = "";
-      let parsed = null;
+      let parsed: any = null;
+      let lastErrorMessage = "";
 
-      for (const model of candidateModels) {
+      for (const endpoint of endpoints) {
         try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      { text: promptText },
-                      {
-                        inlineData: {
-                          mimeType: "image/jpeg",
-                          data: cleanBase64,
-                        },
+          const response = await fetch(`${endpoint}?key=${apiKey}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: promptText },
+                    {
+                      inlineData: {
+                        mimeType: "image/jpeg",
+                        data: cleanBase64,
                       },
-                    ],
-                  },
-                ],
-              }),
-            }
-          );
+                    },
+                  ],
+                },
+              ],
+            }),
+          });
 
           const data = await response.json();
 
+          // Se deu erro de demanda (503 / alta demanda), tenta o próximo modelo da fila
           if (data.error) {
-            lastErrorMsg = data.error.message;
-            continue; // Tenta o próximo modelo
+            lastErrorMessage = data.error.message;
+            console.warn(`Tentando próximo endpoint devido a: ${data.error.message}`);
+            continue;
           }
 
           let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawText) {
             rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
             parsed = JSON.parse(rawText);
-            break; // Sucesso!
+            break; // Sucesso na leitura!
           }
         } catch (e: any) {
-          lastErrorMsg = e.message;
+          lastErrorMessage = e.message;
         }
       }
 
       if (!parsed) {
-        throw new Error(lastErrorMsg || "Nenhum modelo da API conseguiu processar a imagem.");
+        throw new Error(lastErrorMessage || "Servidores ocupados temporariamente. Tente novamente em alguns segundos.");
       }
 
       if (parsed.title) setScoreTitle(parsed.title);
@@ -222,7 +221,7 @@ Regras:
           description: `${parsed.systems.length} pentagramas e notas reais reconhecidas.`,
         });
       } else {
-        throw new Error("Nenhum sistema musical detectado.");
+        throw new Error("Nenhum sistema musical detectado na imagem.");
       }
     } catch (err: any) {
       console.error("Erro na API de Visão:", err);
@@ -245,6 +244,7 @@ Regras:
     }
   };
 
+  // Síntese de Som
   const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
     if (isMuted || isRest || !freqHz || freqHz === 0) return;
     try {
@@ -292,6 +292,7 @@ Regras:
     }
   };
 
+  // Reprodução Sequencial
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
