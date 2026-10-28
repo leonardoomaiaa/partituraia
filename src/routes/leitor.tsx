@@ -58,11 +58,11 @@ function LeitorRoute() {
 
   // Estados de Reprodução
   const [isPlaying, setIsPlaying] = useState(false);
-  const [bpm, setBpm] = useState(90);
+  const [bpm, setBpm] = useState(84);
   const [transposeSemi, setTransposeSemi] = useState(0);
   const [volume, setVolume] = useState(85);
   const [isMuted, setIsMuted] = useState(false);
-  const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("piano");
+  const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("sax");
   const [showMixer, setShowMixer] = useState(false);
 
   // Posição visual
@@ -104,7 +104,7 @@ function LeitorRoute() {
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.8));
+          resolve(canvas.toDataURL("image/jpeg", 0.78));
         } else {
           resolve(dataUrl);
         }
@@ -113,7 +113,7 @@ function LeitorRoute() {
     });
   };
 
-  // Chamada de Visão com Deteção Automática de Modelos Suportados
+  // Descoberta dinâmica do modelo ativo da sua conta + Leitura OMR
   const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
@@ -127,11 +127,30 @@ function LeitorRoute() {
       const compressed = await compressImageForAI(rawImage);
       const cleanBase64 = compressed.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
+      // 1. Consulta os modelos ativos permitidos para a sua chave
+      let activeModelName = "gemini-2.0-flash";
+      try {
+        const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const listData = await listRes.json();
+        if (listData?.models && Array.isArray(listData.models)) {
+          const supported = listData.models.find(
+            (m: any) =>
+              m.supportedGenerationMethods?.includes("generateContent") &&
+              (m.name.includes("flash") || m.name.includes("pro"))
+          );
+          if (supported) {
+            activeModelName = supported.name.replace("models/", "");
+          }
+        }
+      } catch (err) {
+        console.warn("Utilizando modelo padrão flash:", err);
+      }
+
       const promptText = `Você é um motor especialista em Optical Music Recognition (OMR).
-Analise a partitura na imagem enviada e retorne APENAS um JSON válido no formato abaixo, sem formatação markdown ou texto extra:
+Analise a partitura na imagem enviada com máximo rigor e retorne APENAS um JSON válido no formato abaixo, sem texto adicional:
 {
   "title": "Título da Música",
-  "bpm": 100,
+  "bpm": 80,
   "systems": [
     {
       "id": 1,
@@ -145,67 +164,48 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
 }
 
 Regras:
-1. "systems": lista de cada pentagrama/sistema da folha de cima para baixo.
-2. "topPercent": percentagem vertical (0-100) onde começa o pentagrama.
+1. "systems": lista de cada pentagrama presente na imagem do topo até o fim.
+2. "topPercent": porcentagem vertical (0-100) do pentagrama na folha.
 3. "heightPercent": altura vertical (0-100) do pentagrama.
-4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
+4. "notes": notas na ordem cronológica de leitura com frequências em Hz afinadas, durações em tempos (1.0 = semínima, 0.5 = colcheia, etc.), posição xPercent e isRest (true para pausa).`;
 
-      // Modelos testados por ordem de compatibilidade
-      const targetModels = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro-latest"
-      ];
-
-      let parsed: any = null;
-      let lastErrorMessage = "";
-
-      for (const model of targetModels) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-          const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: promptText },
-                    {
-                      inlineData: {
-                        mimeType: "image/jpeg",
-                        data: cleanBase64,
-                      },
+      // 2. Chamada com o modelo descoberto
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${activeModelName}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: promptText },
+                  {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: cleanBase64,
                     },
-                  ],
-                },
-              ],
-            }),
-          });
-
-          const data = await response.json();
-
-          if (data.error) {
-            lastErrorMessage = data.error.message;
-            continue;
-          }
-
-          let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawText) {
-            rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-            parsed = JSON.parse(rawText);
-            break;
-          }
-        } catch (e: any) {
-          lastErrorMessage = e.message;
+                  },
+                ],
+              },
+            ],
+          }),
         }
+      );
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message || "Erro retornado pela API Gemini.");
       }
 
-      if (!parsed) {
-        throw new Error(lastErrorMessage || "Não foi possível comunicar com a API do Gemini.");
+      let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) {
+        throw new Error("A IA não retornou o formato esperado.");
       }
+
+      rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      const parsed = JSON.parse(rawText);
 
       if (parsed.title) setScoreTitle(parsed.title);
       if (parsed.bpm && typeof parsed.bpm === "number") setBpm(parsed.bpm);
@@ -218,10 +218,10 @@ Regras:
           setCursorX(parsed.systems[0].notes[0].xPercent || 15);
         }
         toast.success("Partitura Interpretada com Sucesso!", {
-          description: `${parsed.systems.length} pentagramas reconhecidos pela IA.`,
+          description: `${parsed.systems.length} pentagramas reconhecidos via ${activeModelName}.`,
         });
       } else {
-        throw new Error("Nenhum sistema musical detetado.");
+        throw new Error("Nenhum sistema musical detectado.");
       }
     } catch (err: any) {
       console.error("Erro na API de Visão:", err);
