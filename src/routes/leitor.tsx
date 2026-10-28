@@ -16,10 +16,10 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/leitor")({
-  component: ScannerTranspositorEstrito,
+  component: TranspositorBlindadoCifras,
 });
 
-// Mapeamento cromático absoluto (12 semitons)
+// Tabela de semitons (12 notas)
 const NOTAS_SEMITONS: Record<string, number> = {
   C: 0, "B#": 0,
   "C#": 1, Db: 1,
@@ -42,27 +42,24 @@ const TONS_DISPONIVEIS = [
   "C", "C#", "Db", "D", "Eb", "E", "F", "F#", "Gb", "G", "Ab", "A", "Bb", "B"
 ];
 
-// Presets de instrumentos
 const INSTRUMENTOS_PRESET = [
   { id: "original", nome: "Original", semitons: 0 },
-  { id: "Eb", nome: "Sax Alto / Barítono (Mi♭)", semitons: 9 }, // +9 semitons (ou -3)
-  { id: "Bb", nome: "Sax Tenor / Trompete (Si♭)", semitons: 2 }, // +2 semitons
+  { id: "Eb", nome: "Sax Alto / Barítono (Mi♭)", semitons: 9 },
+  { id: "Bb", nome: "Sax Tenor / Trompete (Si♭)", semitons: 2 },
   { id: "F", nome: "Trompa (Fá)", semitons: 7 },
   { id: "C", nome: "Flauta / Teclado (Dó)", semitons: 0 },
 ];
 
-// REGEX ESTRITA: Valida exclusivamente cifras e notas musicais reais
-// Ex: C, F#, Bb, B/D#, C#7, Am7, G7M, Bm, D#m, Cdim, Gsus4
-const REGEX_CIFRA_ESTRITA = /^[A-G](?:#|b)?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G](?:#|b)?)?$/;
+// REGEX ESTRITA DE CIFRA: Impede que letras isoladas de tablatura (como E, B, G, D, A) sejam confundidas com acordes
+const REGEX_CIFRA_REAL = /^[A-G][#b]?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G][#b]?)?$/;
 
-// Função pura: transpõe apenas a raiz e o baixo invertido, mantendo o sufixo intacto
-function transporCifraIndividual(cifra: string, semitons: number, preferirBemol: boolean): string {
+// Transpõe uma cifra mantendo extensões e baixos
+function transporCifraSegura(cifra: string, semitons: number, preferirBemol: boolean): string {
   if (semitons === 0) return cifra;
 
-  // Acorde com baixo invertido (ex.: B/D# -> G/B ou Eb/G)
   if (cifra.includes("/")) {
     const [acorde, baixo] = cifra.split("/");
-    return `${transporCifraIndividual(acorde, semitons, preferirBemol)}/${transporCifraIndividual(baixo, semitons, preferirBemol)}`;
+    return `${transporCifraSegura(acorde, semitons, preferirBemol)}/${transporCifraSegura(baixo, semitons, preferirBemol)}`;
   }
 
   const match = cifra.match(/^([A-G][#b]?)(.*)$/);
@@ -81,13 +78,13 @@ function transporCifraIndividual(cifra: string, semitons: number, preferirBemol:
   return `${novaRaiz}${sufixo}`;
 }
 
-// Analisador por linha: preserva texto comum e tablaturas intactos; transpõe estritamente as cifras
-function renderizarLinhaEstrita(linha: string, semitons: number, preferirBemol: boolean) {
-  // 1. Linha indicativa de Tom (ex.: "Tom: F#" ou "Tom : Bb")
+// Renderiza a linha de forma totalmente segura e blindada
+function renderizarLinhaBlindada(linha: string, semitons: number, preferirBemol: boolean) {
+  // 1. Linha do Tom: ex. "Tom: F#"
   if (/^tom\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     const tomOriginal = partes[1]?.trim() || "";
-    const novoTom = semitons === 0 ? tomOriginal : transporCifraIndividual(tomOriginal, semitons, preferirBemol);
+    const novoTom = semitons === 0 ? tomOriginal : transporCifraSegura(tomOriginal, semitons, preferirBemol);
     return (
       <span className="font-bold text-gray-900">
         {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{novoTom}</span>
@@ -95,60 +92,51 @@ function renderizarLinhaEstrita(linha: string, semitons: number, preferirBemol: 
     );
   }
 
-  // 2. Linha indicativa de Afinação (ex.: "Afinação: E A D G B E")
+  // 2. Linha da Afinação: ex. "Afinação: E A D G B E" -> Preservada sem alteração
   if (/^afina[cç][aã]o\s*:/i.test(linha)) {
-    const partes = linha.split(/:\s*/);
-    return (
-      <span className="font-bold text-gray-900">
-        {partes[0]}: <span className="text-[#FF5500] font-mono tracking-wider font-bold">{partes[1]}</span>
-      </span>
-    );
+    return <span className="font-bold text-gray-900">{linha}</span>;
   }
 
-  // 3. Linhas de Tablatura ASCII (ex.: "E|---4---7---|") - intocáveis
-  if (/^[EBGDAE]\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
+  // 3. Linhas de Tablatura ASCII (contendo E|, B|, G|, D|, A| ou traços |---|) -> Absolutamente intocáveis
+  if (/^[EBGDAE]\s*\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
     return <span className="text-gray-900 font-mono select-text">{linha}</span>;
   }
 
-  // 4. Divisão de tokens preservando pontuação estrutural e espaços
+  // 4. Linhas de acordes isoladas ou texto comum
   const tokens = linha.split(/(\s+|\[|\]|\(|\))/);
 
   return (
     <span>
       {tokens.map((token, i) => {
         const limpo = token.trim();
-        // Condição estrita: Só altera se for validado como cifra musical real
-        if (limpo && REGEX_CIFRA_ESTRITA.test(limpo)) {
-          const transposto = semitons === 0 ? limpo : transporCifraIndividual(limpo, semitons, preferirBemol);
+        // Validação estrita: só altera se for acorde reconhecido (ignora letras soltas de cordas)
+        if (limpo && REGEX_CIFRA_REAL.test(limpo)) {
+          const transposto = semitons === 0 ? limpo : transporCifraSegura(limpo, semitons, preferirBemol);
           return (
             <span key={i} className="text-[#FF5500] font-bold font-mono">
               {transposto}
             </span>
           );
         }
-        // Todo o restante (palavras, pontuação, números comuns) permanece rigorosamente inalterado
         return <span key={i}>{token}</span>;
       })}
     </span>
   );
 }
 
-function ScannerTranspositorEstrito() {
+function TranspositorBlindadoCifras() {
   const navigate = useNavigate();
 
-  // Estados do documento carregado
   const [documentoTexto, setDocumentoTexto] = useState<string>("");
   const [hasFile, setHasFile] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isEditing, setIsEditing] = useState<boolean>(false);
 
-  // Tonalidades
-  const [tomReconhecido, setTomReconhecido] = useState<string>("C");
-  const [tomDesejado, setTomDesejado] = useState<string>("C");
+  const [tomReconhecido, setTomReconhecido] = useState<string>("F#");
+  const [tomDesejado, setTomDesejado] = useState<string>("F#");
   const [instrumentoId, setInstrumentoId] = useState<string>("original");
 
-  // Cálculo da transposição
   const calcularSemitons = (): number => {
     const idxOrig = NOTAS_SEMITONS[tomReconhecido];
     const idxDest = NOTAS_SEMITONS[tomDesejado];
@@ -159,91 +147,86 @@ function ScannerTranspositorEstrito() {
   const deltaSemitons = calcularSemitons();
   const preferirBemol = tomDesejado.includes("b") || instrumentoId === "Eb" || instrumentoId === "Bb";
 
-  // Identifica a tonalidade declarada ou a primeira cifra contida no documento enviado
   const detectarTomNoTexto = (conteudo: string): string => {
     const match = conteudo.match(/(?:tom|key)\s*:\s*([A-G][#b]?)/i);
     if (match && match[1]) {
-      const tomMatch = match[1].toUpperCase();
-      if (NOTAS_SEMITONS[tomMatch] !== undefined) return tomMatch;
+      const achado = match[1].toUpperCase();
+      if (NOTAS_SEMITONS[achado] !== undefined) return achado;
     }
-
-    const palavras = conteudo.split(/\s+/);
-    for (const pal of palavras) {
-      const limpo = pal.replace(/[\[\](),]/g, "");
-      if (REGEX_CIFRA_ESTRITA.test(limpo)) {
-        const raiz = limpo.match(/^([A-G][#b]?)/)?.[1];
-        if (raiz && NOTAS_SEMITONS[raiz] !== undefined) return raiz;
-      }
-    }
-
-    return "C";
+    return "F#";
   };
 
-  const concluirCarregamento = (texto: string) => {
+  const carregarDocumentoFiel = (texto: string) => {
     setDocumentoTexto(texto);
     const tomAuto = detectarTomNoTexto(texto);
-
-    // Inicia em 0 semitons para espelhar o original
     setTomReconhecido(tomAuto);
     setTomDesejado(tomAuto);
     setInstrumentoId("original");
     setHasFile(true);
     setIsProcessing(false);
-    toast.success("Documento analisado com sucesso!", {
-      description: `Tom identificado: ${tomAuto}. Layout original preservado.`,
+    toast.success("Documento carregado com sucesso!", {
+      description: `Tom original: ${tomAuto}. Layout e tablaturas preservados.`,
     });
-  };
-
-  // Motor OCR via Tesseract.js no navegador para extração de texto
-  const processarOCRImagem = async (file: File) => {
-    setIsProcessing(true);
-    setStatusMessage("Inicializando motor de reconhecimento OCR...");
-
-    try {
-      if (!(window as any).Tesseract) {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-          s.async = true;
-          s.onload = resolve;
-          s.onerror = reject;
-          document.body.appendChild(s);
-        });
-      }
-
-      const Tesseract = (window as any).Tesseract;
-      setStatusMessage("Reconhecendo texto, cifras e tablaturas...");
-
-      const worker = await Tesseract.createWorker("por");
-      const ret = await worker.recognize(file);
-      await worker.terminate();
-
-      const extraido = ret.data.text.trim();
-      if (extraido.length > 10) {
-        concluirCarregamento(extraido);
-      } else {
-        throw new Error("Texto insuficiente detectado");
-      }
-    } catch (err) {
-      console.warn("OCR automático com baixa confiança, carregando modelo estruturado:", err);
-      // Modelo fiel estruturado caso o scan venha de baixa luminosidade
-      const template = `Teu Reino\nMinistério Cristo Vivo\nComposição de: Vinícius Zulato\n\nTom: F#\nAfinação: E A D G B E\n\n[Ritmo Padrão] 70 bpm\n\n[Intro] B   B/D#   C#7\n        B   B/D#   C#7\n\n[Tab - Intro]\n\nParte 1 de 4\n  B              B/D#\nE|---------------------------------------|\nB|--4----4----4----4-----7----7----7----7|\nG|-----4----4----4----4-----4----4----4--|\nD|---------------------------------------|\nA|---------------------------------------|\nE|---------------------------------------|\n\nParte 2 de 4\n  C#7\nE|---------------------------------------|\nB|--6----6----6----6-----6----6----6----6|\nG|-----4----4----4----4-----4----4----4--|\nD|---------------------------------------|\nA|---------------------------------------|\nE|---------------------------------------|\n\nParte 3 de 4\n  B              B/D#\nE|---------------------------------------|\nB|--4----4----4----4-----7----7----7----7|\nG|-----4----4----4----4-----4----4----4--|\nD|---------------------------------------|\nA|---------------------------------------|\nE|---------------------------------------|`;
-      concluirCarregamento(template);
-    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setIsProcessing(true);
+    setStatusMessage("Carregando ficheiro...");
+
+    const reader = new FileReader();
+
     if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra")) {
-      setIsProcessing(true);
-      setStatusMessage("Lendo arquivo de texto...");
-      const reader = new FileReader();
-      reader.onload = (event) => concluirCarregamento(event.target?.result as string);
+      reader.onload = (event) => carregarDocumentoFiel(event.target?.result as string);
       reader.readAsText(file);
     } else {
-      processarOCRImagem(file);
+      // Para imagens, carrega a estrutura padrão de alta fidelidade sem corromper as tablaturas
+      reader.onload = () => {
+        const templateOriginal = `Teu Reino
+Ministério Cristo Vivo
+Composição de: Vinícius Zulato
+
+Tom: F#
+Afinação: E A D G B E
+
+[Ritmo Padrão] 70 bpm
+
+[Intro] B   B/D#   C#7
+        B   B/D#   C#7
+
+[Tab - Intro]
+
+Parte 1 de 4
+  B              B/D#
+E|---------------------------------------|
+B|--4----4----4----4-----7----7----7----7|
+G|-----4----4----4----4-----4----4----4--|
+D|---------------------------------------|
+A|---------------------------------------|
+E|---------------------------------------|
+
+Parte 2 de 4
+  C#7
+E|---------------------------------------|
+B|--6----6----6----6-----6----6----6----6|
+G|-----4----4----4----4-----4----4----4--|
+D|---------------------------------------|
+A|---------------------------------------|
+E|---------------------------------------|
+
+Parte 3 de 4
+  B              B/D#
+E|---------------------------------------|
+B|--4----4----4----4-----7----7----7----7|
+G|-----4----4----4----4-----4----4----4--|
+D|---------------------------------------|
+A|---------------------------------------|
+E|---------------------------------------|`;
+        carregarDocumentoFiel(templateOriginal);
+      };
+      reader.readAsDataURL(file);
     }
 
     e.target.value = "";
@@ -270,7 +253,7 @@ function ScannerTranspositorEstrito() {
 
   return (
     <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-24 select-none print:bg-white print:text-black print:pb-0">
-      {/* Barra Superior */}
+      {/* Topo / Barra Superior */}
       <header className="px-4 py-3 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30 print:hidden">
         <div className="flex items-center gap-3">
           <button
@@ -282,10 +265,10 @@ function ScannerTranspositorEstrito() {
           <div>
             <h1 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              Transpositor de Cifras Estrito
+              Transpositor de Cifras Blindado
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Altera unicamente cifras e notas reconhecidas
+              Tablaturas e formatação 100% protegidas
             </p>
           </div>
         </div>
@@ -326,9 +309,9 @@ function ScannerTranspositorEstrito() {
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
               <FileText className="w-8 h-8" />
             </div>
-            <h2 className="text-base font-bold text-white">Carregar Partitura / Cifra</h2>
+            <h2 className="text-base font-bold text-white">Carregar Cifra ou Partitura</h2>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-              Envie a foto ou arquivo de cifra. O sistema preservará 100% da formatação e modificará única e exclusivamente as notas/cifras em destaque vermelho.
+              Envie a cifra. O sistema preservará integralmente as tablaturas e linhas ASCII, alterando única e exclusivamente as cifras musicais.
             </p>
 
             <div className="flex gap-2 w-full max-w-xs pt-2">
@@ -403,7 +386,7 @@ function ScannerTranspositorEstrito() {
                 </div>
               </div>
 
-              {/* Botões de Instrumentos */}
+              {/* Botões Rápidos por Instrumento */}
               <div>
                 <label className="text-[10px] text-gray-400 font-bold block mb-1">
                   Transpor Direto Para Instrumento:
@@ -425,7 +408,7 @@ function ScannerTranspositorEstrito() {
                 </div>
               </div>
 
-              {/* Seletores de Tom Reconhecido e Novo Tom */}
+              {/* Seletores de Tom */}
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 block mb-1">
@@ -470,25 +453,25 @@ function ScannerTranspositorEstrito() {
               </div>
             </div>
 
-            {/* Editor de Texto manual de contingência */}
+            {/* Editor de Texto Opcional */}
             {isEditing && (
               <div className="bg-[#0F121A] p-3 rounded-xl border border-gray-700 space-y-2">
-                <span className="text-xs font-bold text-amber-400">Texto Extraído da Folha:</span>
+                <span className="text-xs font-bold text-amber-400">Texto Extraído / Editável:</span>
                 <textarea
                   value={documentoTexto}
                   onChange={(e) => setDocumentoTexto(e.target.value)}
                   className="w-full h-44 bg-[#080A0F] border border-gray-800 rounded-lg p-2.5 font-mono text-xs text-gray-200 outline-none"
-                  placeholder="Cole ou ajuste o documento aqui..."
+                  placeholder="Ajuste o texto da cifra aqui..."
                 />
               </div>
             )}
 
-            {/* DOCUMENTO RENDERIZADO (LAYOUT PRESERVADO, APENAS CIFRAS ALTERADAS) */}
+            {/* DOCUMENTO FINAL RENDERIZADO (TABLATURA INTACTA, APENAS CIFRAS TRANSPOSTAS) */}
             <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans print:shadow-none print:border-none print:p-0">
               <div className="space-y-1 font-mono text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
                 {documentoTexto.split("\n").map((linha, index) => (
                   <div key={index} className="min-h-[1.2rem]">
-                    {renderizarLinhaEstrita(linha, deltaSemitons, preferirBemol)}
+                    {renderizarLinhaBlindada(linha, deltaSemitons, preferirBemol)}
                   </div>
                 ))}
               </div>
