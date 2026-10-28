@@ -16,7 +16,7 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/leitor")({
-  component: TranspositorDoisGrupos,
+  component: TranspositorDinamicoReal,
 });
 
 // Tabela cromática de 12 semitons
@@ -50,7 +50,7 @@ const INSTRUMENTOS_PRESET = [
   { id: "C", nome: "Flauta / Teclado (Dó)", semitons: 0 },
 ];
 
-// REGEX DO GRUPO 1: Identifica estritamente notas e cifras musicais reais
+// GRUPO 1: Identifica estritamente notas e cifras musicais reais
 const REGEX_GRUPO1_CIFRA = /^[A-G][#b]?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G][#b]?)?$/;
 
 // Transpõe o Grupo 1 mantendo acidentes e baixos invertidos
@@ -78,27 +78,21 @@ function transporGrupo1(cifra: string, semitons: number, preferirBemol: boolean)
   return `${novaRaiz}${sufixo}`;
 }
 
-// Processador de Linha baseado na separação de Grupos
+// Processador de Linha baseado na separação de Grupos para QUALQUER ficheiro
 function renderizarLinhaPorGrupos(
   linha: string,
   semitons: number,
   preferirBemol: boolean,
   modoVisualizacao: "completo" | "grupo1" | "grupo2"
 ) {
-  // 1. Linha do Tom (pertence ao Grupo 1 e Grupo 2 simultaneamente para contexto)
+  // 1. Linha indicativa de Tom
   if (/^tom\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     const tomOriginal = partes[1]?.trim() || "";
     const tomFinal = semitons === 0 ? tomOriginal : transporGrupo1(tomOriginal, semitons, preferirBemol);
 
-    if (modoVisualizacao === "grupo2") {
-      // Grupo 2 exibe o rótulo limpo sem o tom preenchido
-      return <span className="font-bold text-gray-900">{partes[0]}:</span>;
-    }
-    if (modoVisualizacao === "grupo1") {
-      // Grupo 1 exibe apenas o tom transposto
-      return <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>;
-    }
+    if (modoVisualizacao === "grupo2") return <span className="font-bold text-gray-900">{partes[0]}:</span>;
+    if (modoVisualizacao === "grupo1") return <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>;
     return (
       <span className="font-bold text-gray-900">
         {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>
@@ -106,7 +100,7 @@ function renderizarLinhaPorGrupos(
     );
   }
 
-  // 2. Linha da Afinação
+  // 2. Linha indicativa de Afinação
   if (/^afina[cç][aã]o\s*:/i.test(linha)) {
     if (modoVisualizacao === "grupo1") return <span className="text-transparent"> </span>;
     return <span className="font-bold text-gray-900">{linha}</span>;
@@ -114,14 +108,11 @@ function renderizarLinhaPorGrupos(
 
   // 3. Linhas de Tablatura ASCII (Grupo 2 - Intocáveis)
   if (/^[EBGDAE]\s*\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
-    if (modoVisualizacao === "grupo1") {
-      // No modo Grupo 1 puro, oculta as linhas da tablatura para focar só nas notas
-      return <span className="text-transparent"> </span>;
-    }
+    if (modoVisualizacao === "grupo1") return <span className="text-transparent"> </span>;
     return <span className="text-gray-900 font-mono select-text">{linha}</span>;
   }
 
-  // 4. Linhas mistas de cifras e texto
+  // 4. Demais linhas contendo cifras e texto do arquivo carregado
   const tokens = linha.split(/(\s+|\[|\]|\(|\))/);
 
   return (
@@ -131,11 +122,7 @@ function renderizarLinhaPorGrupos(
         const ehGrupo1 = limpo && REGEX_GRUPO1_CIFRA.test(limpo);
 
         if (ehGrupo1) {
-          if (modoVisualizacao === "grupo2") {
-            // Grupo 2 omite as cifras
-            return <span key={i} className="opacity-0">{" ".repeat(limpo.length)}</span>;
-          }
-          // Grupo 1 ou Completo exibe a cifra transposta em destaque vermelho/laranja
+          if (modoVisualizacao === "grupo2") return <span key={i} className="opacity-0">{" ".repeat(limpo.length)}</span>;
           const transposta = semitons === 0 ? limpo : transporGrupo1(limpo, semitons, preferirBemol);
           return (
             <span key={i} className="text-[#FF5500] font-bold font-mono">
@@ -143,11 +130,7 @@ function renderizarLinhaPorGrupos(
             </span>
           );
         } else {
-          if (modoVisualizacao === "grupo1") {
-            // Grupo 1 omite o texto comum e pontuação
-            return <span key={i}> </span>;
-          }
-          // Grupo 2 ou Completo exibe o texto intocável
+          if (modoVisualizacao === "grupo1") return <span key={i}> </span>;
           return <span key={i}>{token}</span>;
         }
       })}
@@ -155,7 +138,7 @@ function renderizarLinhaPorGrupos(
   );
 }
 
-function TranspositorDoisGrupos() {
+function TranspositorDinamicoReal() {
   const navigate = useNavigate();
 
   const [documentoTexto, setDocumentoTexto] = useState<string>("");
@@ -164,11 +147,10 @@ function TranspositorDoisGrupos() {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isEditing, setIsEditing] = useState<boolean>(false);
 
-  // Modo de Exibição igual ao seu exemplo de referência (completo, só grupo 1 ou só grupo 2)
   const [modoVisualizacao, setModoVisualizacao] = useState<"completo" | "grupo1" | "grupo2">("completo");
 
-  const [tomReconhecido, setTomReconhecido] = useState<string>("F#");
-  const [tomDesejado, setTomDesejado] = useState<string>("F#");
+  const [tomReconhecido, setTomReconhecido] = useState<string>("C");
+  const [tomDesejado, setTomDesejado] = useState<string>("C");
   const [instrumentoId, setInstrumentoId] = useState<string>("original");
 
   const calcularSemitons = (): number => {
@@ -181,86 +163,92 @@ function TranspositorDoisGrupos() {
   const deltaSemitons = calcularSemitons();
   const preferirBemol = tomDesejado.includes("b") || instrumentoId === "Eb" || instrumentoId === "Bb";
 
+  // Identifica dinamicamente o tom dentro do texto do novo arquivo enviado
   const detectarTomNoTexto = (conteudo: string): string => {
     const match = conteudo.match(/(?:tom|key)\s*:\s*([A-G][#b]?)/i);
     if (match && match[1]) {
       const achado = match[1].toUpperCase();
       if (NOTAS_SEMITONS[achado] !== undefined) return achado;
     }
-    return "F#";
+
+    const palavras = conteudo.split(/\s+/);
+    for (const pal of palavras) {
+      const limpo = pal.replace(/[\[\](),]/g, "");
+      if (REGEX_GRUPO1_CIFRA.test(limpo)) {
+        const raiz = limpo.match(/^([A-G][#b]?)/)?.[1];
+        if (raiz && NOTAS_SEMITONS[raiz] !== undefined) return raiz;
+      }
+    }
+
+    return "C";
   };
 
-  const carregarDocumentoBase = (texto: string) => {
-    setDocumentoTexto(texto);
-    const tomAuto = detectarTomNoTexto(texto);
+  const processarTextoCarregado = (textoLido: string) => {
+    setDocumentoTexto(textoLido);
+    const tomAuto = detectarTomNoTexto(textoLido);
     setTomReconhecido(tomAuto);
     setTomDesejado(tomAuto);
     setInstrumentoId("original");
     setHasFile(true);
     setIsProcessing(false);
-    toast.success("Arquivo carregado com sucesso!", {
-      description: `Grupos identificados e isolados. Tom original: ${tomAuto}.`,
+    toast.success("Novo arquivo processado com sucesso!", {
+      description: `Tom detectado: ${tomAuto}. Exibindo o conteúdo real carregado.`,
     });
+  };
+
+  // Leitor OCR universal de imagens usando Tesseract.js no navegador
+  const extrairTextoDeImagem = async (file: File) => {
+    setIsProcessing(true);
+    setStatusMessage("A analisar a imagem enviada...");
+
+    try {
+      if (!(window as any).Tesseract) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+          s.async = true;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.body.appendChild(s);
+        });
+      }
+
+      const Tesseract = (window as any).Tesseract;
+      setStatusMessage("Reconhecendo texto e cifras da nova imagem...");
+
+      const worker = await Tesseract.createWorker("por");
+      const ret = await worker.recognize(file);
+      await worker.terminate();
+
+      const resultadoOCR = ret.data.text.trim();
+      if (resultadoOCR.length > 5) {
+        processarTextoCarregado(resultadoOCR);
+      } else {
+        throw new Error("Texto extraído muito curto.");
+      }
+    } catch (err) {
+      console.warn("Aviso no OCR da imagem:", err);
+      // Se a imagem estiver muito escura ou sem foco, abre o editor para colar ou digitar o texto real da foto
+      setIsEditing(true);
+      processarTextoCarregado(
+        `[Arquivo: ${file.name}]\nTom: C\nAfinação: E A D G B E\n\n(Insira ou cole o conteúdo da sua cifra aqui...)`
+      );
+      toast.info("Ajuste o texto na caixa de edição caso necessário.");
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsProcessing(true);
-    setStatusMessage("A carregar ficheiro...");
-
-    const reader = new FileReader();
-
-    if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra")) {
-      reader.onload = (event) => carregarDocumentoBase(event.target?.result as string);
+    if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra") || file.name.endsWith(".md")) {
+      setIsProcessing(true);
+      setStatusMessage("Lendo arquivo...");
+      const reader = new FileReader();
+      reader.onload = (event) => processarTextoCarregado(event.target?.result as string);
       reader.readAsText(file);
     } else {
-      // Template padrão universal de alta fidelidade espelhando o seu modelo de referência
-      reader.onload = () => {
-        const templateReferencia = `Teu Reino
-Ministério Cristo Vivo
-Composição de: Vinícius Zulato
-
-Tom: F#
-Afinação: E A D G B E
-
-[Ritmo Padrão] 70 bpm
-
-[Intro] B   B/D#   C#7
-        B   B/D#   C#7
-
-[Tab - Intro]
-
-Parte 1 de 4
-  B              B/D#
-E|---------------------------------------|
-B|--4----4----4----4-----7----7----7----7|
-G|-----4----4----4----4-----4----4----4--|
-D|---------------------------------------|
-A|---------------------------------------|
-E|---------------------------------------|
-
-Parte 2 de 4
-  C#7
-E|---------------------------------------|
-B|--6----6----6----6-----6----6----6----6|
-G|-----4----4----4----4-----4----4----4--|
-D|---------------------------------------|
-A|---------------------------------------|
-E|---------------------------------------|
-
-Parte 3 de 4
-  B              B/D#
-E|---------------------------------------|
-B|--4----4----4----4-----7----7----7----7|
-G|-----4----4----4----4-----4----4----4--|
-D|---------------------------------------|
-A|---------------------------------------|
-E|---------------------------------------|`;
-        carregarDocumentoBase(templateReferencia);
-      };
-      reader.readAsDataURL(file);
+      extrairTextoDeImagem(file);
     }
 
     e.target.value = "";
@@ -299,10 +287,10 @@ E|---------------------------------------|`;
           <div>
             <h1 className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              Transpositor por Grupos (Dois Grupos)
+              Scanner Dinâmico Universal
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Grupo 1 (Cifras Móveis) & Grupo 2 (Layout Intocável)
+              Reconhece e processa qualquer ficheiro enviado
             </p>
           </div>
         </div>
@@ -337,15 +325,15 @@ E|---------------------------------------|`;
       </header>
 
       <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-4 space-y-4 print:p-0 print:max-w-none">
-        {/* Painel Inicial de Upload */}
+        {/* Painel Inicial de Upload (Sempre limpo para novos arquivos) */}
         {!hasFile ? (
           <div className="p-8 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center shadow-xl space-y-3">
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
               <Layers className="w-8 h-8" />
             </div>
-            <h2 className="text-base font-bold text-white">Carregar Cifra para Separação de Grupos</h2>
+            <h2 className="text-base font-bold text-white">Carregar Nova Cifra ou Ficheiro</h2>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-              Faça upload do arquivo. O motor separará automaticamente o Grupo 1 (Notas/Cifras transpostas) do Grupo 2 (Demais elementos intocáveis).
+              Envie qualquer fotografia ou documento. O sistema lerá o conteúdo real do ficheiro enviado, sem utilizar modelos anteriores.
             </p>
 
             <div className="flex gap-2 w-full max-w-xs pt-2">
@@ -368,7 +356,7 @@ E|---------------------------------------|`;
                 </span>
                 <input
                   type="file"
-                  accept="image/*,.txt,.cifra,.pdf"
+                  accept="image/*,.txt,.cifra,.pdf,.md"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -384,7 +372,7 @@ E|---------------------------------------|`;
           </div>
         ) : (
           <>
-            {/* PAINEL DE CONTROLE E ABAS DE VISUALIZAÇÃO (Igual ao modelo de referência) */}
+            {/* PAINEL DE CONTROLE DE TRANSPOSIÇÃO E GRUPOS */}
             <div className="bg-[#0F121A] p-4 rounded-2xl border border-gray-800 shadow-lg space-y-3 print:hidden">
               <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                 <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
@@ -396,10 +384,10 @@ E|---------------------------------------|`;
                 </span>
               </div>
 
-              {/* ABAS DE VISUALIZAÇÃO (Completo / Apenas Grupo 1 / Apenas Grupo 2) */}
+              {/* Abas de Visualização (Completo / Grupo 1 / Grupo 2) */}
               <div>
                 <label className="text-[10px] text-gray-400 font-bold block mb-1">
-                  Modo de Exibição dos Grupos (Referência Visual):
+                  Modo de Exibição dos Grupos:
                 </label>
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
@@ -435,7 +423,7 @@ E|---------------------------------------|`;
                 </div>
               </div>
 
-              {/* Atalhos por Instrumento */}
+              {/* Atalhos de Instrumento */}
               <div>
                 <label className="text-[10px] text-gray-400 font-bold block mb-1">
                   Transpor Grupo 1 Direto Para:
@@ -502,10 +490,10 @@ E|---------------------------------------|`;
               </div>
             </div>
 
-            {/* Editor de Texto Opcional */}
+            {/* Editor de Texto Dinâmico */}
             {isEditing && (
               <div className="bg-[#0F121A] p-3 rounded-xl border border-gray-700 space-y-2">
-                <span className="text-xs font-bold text-amber-400">Texto Base dos Grupos:</span>
+                <span className="text-xs font-bold text-amber-400">Texto Extraído do Novo Arquivo:</span>
                 <textarea
                   value={documentoTexto}
                   onChange={(e) => setDocumentoTexto(e.target.value)}
@@ -514,7 +502,7 @@ E|---------------------------------------|`;
               </div>
             )}
 
-            {/* DOCUMENTO FINAL RENDERIZADO (SEGUINDO O MODELO DE 3 PAINÉIS / GRUPOS) */}
+            {/* DOCUMENTO FINAL RENDERIZADO */}
             <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans print:shadow-none print:border-none print:p-0">
               <div className="space-y-1 font-mono text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
                 {documentoTexto.split("\n").map((linha, index) => (
