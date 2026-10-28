@@ -80,7 +80,6 @@ function LeitorRoute() {
     toast.success("Chave de API salva com sucesso!");
   };
 
-  // Redimensiona a imagem para evitar estouro de limite de payload
   const compressImageForAI = (dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -114,7 +113,7 @@ function LeitorRoute() {
     });
   };
 
-  // Chamada de Visão da API
+  // Chamada de Visão da API com Model Fallback
   const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
@@ -151,44 +150,63 @@ Regras:
 3. "heightPercent": altura vertical (0-100) do pentagrama.
 4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: promptText },
+      // Lista de modelos suportados para tentar em ordem
+      const candidateModels = [
+        "gemini-2.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro",
+        "gemini-flash-latest"
+      ];
+
+      let lastErrorMsg = "";
+      let parsed = null;
+
+      for (const model of candidateModels) {
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [
                   {
-                    inlineData: {
-                      mimeType: "image/jpeg",
-                      data: cleanBase64,
-                    },
+                    parts: [
+                      { text: promptText },
+                      {
+                        inlineData: {
+                          mimeType: "image/jpeg",
+                          data: cleanBase64,
+                        },
+                      },
+                    ],
                   },
                 ],
-              },
-            ],
-          }),
+              }),
+            }
+          );
+
+          const data = await response.json();
+
+          if (data.error) {
+            lastErrorMsg = data.error.message;
+            continue; // Tenta o próximo modelo
+          }
+
+          let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+            parsed = JSON.parse(rawText);
+            break; // Sucesso!
+          }
+        } catch (e: any) {
+          lastErrorMsg = e.message;
         }
-      );
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error.message || "Erro na API Gemini.");
       }
 
-      let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!rawText) {
-        throw new Error("A IA não retornou dados. Verifique a validade da sua API Key.");
+      if (!parsed) {
+        throw new Error(lastErrorMsg || "Nenhum modelo da API conseguiu processar a imagem.");
       }
-
-      rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-
-      const parsed = JSON.parse(rawText);
 
       if (parsed.title) setScoreTitle(parsed.title);
       if (parsed.bpm && typeof parsed.bpm === "number") setBpm(parsed.bpm);
@@ -227,7 +245,6 @@ Regras:
     }
   };
 
-  // Síntese de Som
   const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
     if (isMuted || isRest || !freqHz || freqHz === 0) return;
     try {
@@ -275,7 +292,6 @@ Regras:
     }
   };
 
-  // Reprodução Sequencial
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
