@@ -51,46 +51,71 @@ function LeitorRoute() {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [scoreTitle, setScoreTitle] = useState("Leitor Inteligente OMR");
 
-  // Estrutura de Pentagramas da Partitura
+  // Estrutura de Pentagramas
   const [systems, setSystems] = useState<StaffSystem[]>([]);
   const [currentSystemIndex, setCurrentSystemIndex] = useState(0);
   const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
 
-  // Estados de Reprodução & Metrônomo
+  // Estados de Reprodução
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(90);
   const [transposeSemi, setTransposeSemi] = useState(0);
   const [volume, setVolume] = useState(85);
   const [isMuted, setIsMuted] = useState(false);
-  const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("sax");
+  const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("piano");
   const [showMixer, setShowMixer] = useState(false);
 
-  // Posição da linha vermelha de leitura
+  // Posição visual
   const [cursorX, setCursorX] = useState(15);
   const [currentBeat, setCurrentBeat] = useState(0);
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioCtxRef = useRef<AudioContext null |>(null);
   const playbackTimerRef = useRef<any>(null);
 
-  // Tabela de frequências padrão
-  const pitchMap: Record<string, number> = {
-    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "F#3": 185.00, "G3": 196.00, "A3": 220.00, "B3": 246.94,
-    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "D#4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99, "G4": 392.00, "G#4": 415.30, "A4": 440.00, "Bb4": 466.16, "B4": 493.88,
-    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "Eb5": 622.25, "E5": 659.25, "F5": 698.46, "F#5": 739.99, "G5": 783.99, "G#5": 830.61, "A5": 880.00, "Bb5": 932.33, "B5": 987.77,
-    "C6": 1046.50,
-  };
-
   const handleSaveApiKey = (val: string) => {
-    setApiKey(val);
-    localStorage.setItem("GEMINI_API_KEY", val);
+    const trimmed = val.trim();
+    setApiKey(trimmed);
+    localStorage.setItem("GEMINI_API_KEY", trimmed);
     setShowKeyModal(false);
     toast.success("Chave de API salva com sucesso!");
   };
 
-  // =========================================================================
-  // RECONHECIMENTO VIA API DE VISÃO MULTIMODAL
-  // =========================================================================
-  const analyzeWithVisionAI = async (base64Image: string) => {
+  // Redimensiona imagem antes do envio para evitar timeout e erro de payload grande
+  const compressImageForAI = (dataUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxDim = 1500;
+        let w = img.width;
+        let h = img.height;
+
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        } else {
+          resolve(dataUrl);
+        }
+      };
+      img.src = dataUrl;
+    });
+  };
+
+  // Chamada à API de Visão do Gemini
+  const analyzeWithVisionAI = async (rawImage: string) => {
     if (!apiKey) {
       setShowKeyModal(true);
       toast.info("Insira sua chave de API para o reconhecimento inteligente.");
@@ -98,31 +123,20 @@ function LeitorRoute() {
     }
 
     setIsProcessing(true);
-    const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
-    const promptText = `
-Você é um motor especialista em OMR (Optical Music Recognition) e transcrição musical de partituras.
-Analise a partitura na imagem enviada com total precisão:
-1. Identifique o Título da obra, Instrumento, Tonalidade, Armadura de Clave e Fórmula de Compasso.
-2. Identifique todos os pentagramas (sistemas) presentes do topo à base da folha.
-3. Para cada pentagrama, meça verticalmente sua posição:
-   - topPercent (porcentagem de 0 a 100 indicando onde o pentagrama começa no topo da folha)
-   - heightPercent (porcentagem de 0 a 100 da altura ocupada pelo pentagrama)
-4. Transcreva a sequência exata de notas e pausas de cada pentagrama:
-   - noteName: ex "G4", "F#4", "Bb4", "D5", "Pausa"
-   - frequency: frequência em Hertz correspondente à nota afinada (ou 0 se for pausa)
-   - durationBeats: duração em tempos (1.0 para semínima, 0.5 para colcheia, 0.25 para semicolcheia, 2.0 para mínima)
-   - xPercent: posição horizontal (0 a 100%) da nota ao longo da largura da folha
-   - isRest: true se for pausa musical, false se for nota tocada
+    try {
+      const compressed = await compressImageForAI(rawImage);
+      const cleanBase64 = compressed.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
 
-Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este formato:
+      const promptText = `Você é um motor especialista em Optical Music Recognition (OMR).
+Analise a partitura na imagem enviada e retorne APENAS um JSON válido no formato abaixo, sem markdown ou texto extra:
 {
-  "title": "Nome da Obra",
-  "bpm": 80,
+  "title": "Título da Música",
+  "bpm": 100,
   "systems": [
     {
       "id": 1,
-      "topPercent": 14.5,
+      "topPercent": 14.0,
       "heightPercent": 7.0,
       "notes": [
         { "noteName": "G4", "frequency": 392.0, "durationBeats": 1.0, "xPercent": 25, "isRest": false }
@@ -130,9 +144,13 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
     }
   ]
 }
-`;
 
-    try {
+Regras:
+1. "systems": lista de cada pentagrama/sistema da folha de cima para baixo.
+2. "topPercent": porcentagem vertical (0-100) onde começa o pentagrama.
+3. "heightPercent": altura vertical (0-100) do pentagrama.
+4. "notes": notas na ordem da leitura da esquerda para a direita, com a frequência afinada em Hz, durationBeats (1.0 = semínima, 0.5 = colcheia, 2.0 = mínima), xPercent (posição horizontal de 0 a 100) e isRest (true para pausa).`;
+
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
         {
@@ -152,19 +170,24 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
                 ],
               },
             ],
-            generationConfig: {
-              responseMimeType: "application/json",
-            },
           }),
         }
       );
 
       const data = await response.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (data.error) {
+        throw new Error(data.error.message || "Erro na API Gemini.");
+      }
+
+      let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (!rawText) {
-        throw new Error("Resposta da IA vazia.");
+        throw new Error("A IA não retornou conteúdo. Verifique se a chave de API está válida.");
       }
+
+      // Limpeza de blocos markdown
+      rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
 
       const parsed = JSON.parse(rawText);
 
@@ -179,14 +202,14 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
           setCursorX(parsed.systems[0].notes[0].xPercent || 15);
         }
         toast.success("Partitura Interpretada com Sucesso!", {
-          description: `${parsed.systems.length} pentagramas e notas reais reconhecidas pela IA.`,
+          description: `${parsed.systems.length} pentagramas e notas reais reconhecidas.`,
         });
       } else {
-        throw new Error("Nenhum sistema musical detectado na partitura.");
+        throw new Error("Nenhum sistema musical detectado.");
       }
     } catch (err: any) {
       console.error("Erro na API de Visão:", err);
-      toast.error("Erro ao analisar via IA: " + (err.message || "Verifique a chave da API"));
+      toast.error(err.message || "Falha ao processar a partitura.");
     } finally {
       setIsProcessing(false);
     }
@@ -205,9 +228,9 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
     }
   };
 
-  // Motor Acústico de Síntese Musical
+  // Síntese de Áudio
   const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
-    if (isMuted || isRest || freqHz === 0) return;
+    if (isMuted || isRest || !freqHz || freqHz === 0) return;
     try {
       if (!audioCtxRef.current) {
         audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -253,7 +276,7 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
     }
   };
 
-  // Sequenciador de reprodução nota por nota
+  // Reprodução Sincronizada
   const playStep = (sIdx: number, nIdx: number) => {
     if (!isPlaying) return;
 
@@ -279,9 +302,9 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
         playStep(sIdx, nIdx + 1);
       } else {
         if (sIdx < systems.length - 1) {
-          playStep(sIdx + 1, 0); // Pula de pentagrama
+          playStep(sIdx + 1, 0);
         } else {
-          playStep(0, 0); // Reinicia ao final da folha
+          playStep(0, 0);
         }
       }
     }, durationMs);
@@ -313,7 +336,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
 
   return (
     <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
-      {/* Topo / Barra Superior */}
       <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <Button
@@ -360,7 +382,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
         </div>
       </header>
 
-      {/* Visualizador da Partitura */}
       <main className="flex-1 relative flex items-center justify-center p-2 overflow-hidden bg-[#050608]">
         {!imagePreview ? (
           <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center">
@@ -369,7 +390,7 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
             </div>
             <h2 className="text-sm font-semibold mb-1">Reconhecimento OMR por IA</h2>
             <p className="text-[11px] text-gray-400 mb-4 max-w-xs">
-              Envie fotos ou scans de partituras para interpretação rigorosa das notas, pausas e pautas.
+              Envie fotos ou digitalizações de partituras para interpretação rigorosa das notas, pausas e pautas.
             </p>
             <label className="cursor-pointer">
               <Button asChild size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-black font-semibold">
@@ -388,7 +409,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
               className="w-full h-full object-contain pointer-events-none"
             />
 
-            {/* Destaque do Pentagrama Atual */}
             {activeStaff && (
               <div
                 className="absolute left-[2%] right-[2%] border-2 border-red-500/70 bg-red-500/5 pointer-events-none transition-all duration-150"
@@ -397,7 +417,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
                   height: `${activeStaff.heightPercent}%`,
                 }}
               >
-                {/* Linha Vermelha Sincronizada */}
                 <div
                   className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_12px_rgba(239,68,68,1)] transition-all duration-100"
                   style={{ left: `${cursorX}%` }}
@@ -416,7 +435,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
           </div>
         )}
 
-        {/* Modal para Inserir Chave de API */}
         {showKeyModal && (
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-[#141722] border border-gray-700 p-5 rounded-2xl w-full max-w-sm space-y-3">
@@ -457,7 +475,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
           </div>
         )}
 
-        {/* Painel do Mixer */}
         {showMixer && (
           <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
             <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
@@ -527,7 +544,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
         )}
       </main>
 
-      {/* Barra de Reprodução */}
       <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2 flex flex-col gap-2 z-20 shadow-lg">
         <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
           <div className="flex items-center gap-1">
@@ -585,7 +601,6 @@ Retorne ESTRITAMENTE um objeto JSON válido, sem texto adicional, com este forma
           </label>
         </div>
 
-        {/* Pílulas de Navegação por Pentagrama */}
         <div className="flex items-center justify-center gap-1 pt-0.5 overflow-x-auto">
           {systems.map((s, idx) => (
             <button
