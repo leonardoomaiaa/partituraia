@@ -44,34 +44,59 @@ function LeitorRoute() {
   // Estados de Imagem
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [scoreTitle, setScoreTitle] = useState<string>("Carregar Partitura");
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
   // Pentagramas e Posições
   const [systems, setSystems] = useState<StaffSystem[]>([]);
-  const [currentSystemIndex, setCurrentSystemIndex] = useState(0);
-  const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
+  const [currentSystemIndex, setCurrentSystemIndex] = useState<number>(0);
+  const [currentNoteIndex, setCurrentNoteIndex] = useState<number>(0);
 
   // Estados de Reprodução
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [bpm, setBpm] = useState(100);
-  const [transposeSemi, setTransposeSemi] = useState(0);
-  const [volume, setVolume] = useState(85);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [bpm, setBpm] = useState<number>(100);
+  const [transposeSemi, setTransposeSemi] = useState<number>(0);
+  const [volume, setVolume] = useState<number>(85);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("piano");
-  const [showMixer, setShowMixer] = useState(false);
+  const [showMixer, setShowMixer] = useState<boolean>(false);
 
   // Cursor Vermelho
-  const [cursorX, setCursorX] = useState(18);
+  const [cursorX, setCursorX] = useState<number>(18);
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const playbackTimerRef = useRef<number | null>(null);
+  const audioCtxRef = useRef<any>(null);
+  const playbackTimerRef = useRef<any>(null);
 
   const pitchMap: Record<string, number> = {
-    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "G3": 196.00, "A3": 220.00, "B3": 246.94,
-    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "Eb4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99,
-    "G4": 392.00, "G#4": 415.30, "A4": 440.00, "Bb4": 466.16, "B4": 493.88,
-    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "Eb5": 622.25, "E5": 659.25, "F5": 698.46,
-    "G5": 783.99, "A5": 880.00, "Bb5": 932.33, "B5": 987.77, "C6": 1046.50
+    C3: 130.81,
+    D3: 146.83,
+    E3: 164.81,
+    F3: 174.61,
+    G3: 196.0,
+    A3: 220.0,
+    B3: 246.94,
+    C4: 261.63,
+    "C#4": 277.18,
+    D4: 293.66,
+    Eb4: 311.13,
+    E4: 329.63,
+    F4: 349.23,
+    "F#4": 369.99,
+    G4: 392.0,
+    "G#4": 415.3,
+    A4: 440.0,
+    Bb4: 466.16,
+    B4: 493.88,
+    C5: 523.25,
+    "C#5": 554.37,
+    D5: 587.33,
+    Eb5: 622.25,
+    E5: 659.25,
+    F5: 698.46,
+    G5: 783.99,
+    A5: 880.0,
+    Bb5: 932.33,
+    B5: 987.77,
+    C6: 1046.5,
   };
 
   const setupScoreSystems = (title: string) => {
@@ -142,9 +167,9 @@ function LeitorRoute() {
       setCursorX(generatedSystems[0].notes[0].xPercent);
       setIsProcessing(false);
       toast.success("Partitura carregada com sucesso!", {
-        description: `A exibir: ${title}`,
+        description: `Exibindo: ${title}`,
       });
-    }, 350);
+    }, 300);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -169,7 +194,8 @@ function LeitorRoute() {
     if (isMuted || !freqHz || freqHz === 0) return;
     try {
       if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioCtxRef.current = new AudioContextClass();
       }
       const ctx = audioCtxRef.current;
       if (ctx.state === "suspended") ctx.resume();
@@ -214,7 +240,7 @@ function LeitorRoute() {
 
   const stopPlayback = () => {
     if (playbackTimerRef.current !== null) {
-      window.clearTimeout(playbackTimerRef.current);
+      clearTimeout(playbackTimerRef.current);
       playbackTimerRef.current = null;
     }
   };
@@ -238,7 +264,7 @@ function LeitorRoute() {
 
     playSynthesizedTone(note.frequency, durationSec);
 
-    playbackTimerRef.current = window.setTimeout(() => {
+    playbackTimerRef.current = setTimeout(() => {
       if (nIdx < currentStaff.notes.length - 1) {
         playStep(sIdx, nIdx + 1);
       } else {
@@ -344,4 +370,78 @@ function LeitorRoute() {
             <img
               src={imagePreview}
               alt="Partitura Selecionada"
-              className="w-full h-full object-contain pointer
+              className="w-full h-full object-contain pointer-events-none"
+            />
+
+            {activeStaff && (
+              <div
+                className="absolute left-[2%] right-[2%] border-2 border-red-500/70 bg-red-500/5 pointer-events-none transition-all duration-150"
+                style={{
+                  top: `${activeStaff.topPercent}%`,
+                  height: `${activeStaff.heightPercent}%`,
+                }}
+              >
+                <div
+                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_12px_rgba(239,68,68,1)] transition-all duration-100"
+                  style={{ left: `${cursorX}%` }}
+                >
+                  <div className="absolute -top-1 -left-[3.5px] w-2.5 h-2.5 bg-red-600 rounded-full" />
+                </div>
+              </div>
+            )}
+
+            {isProcessing && (
+              <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
+                <Sparkles className="w-8 h-8 text-emerald-400 animate-spin" />
+                <p className="text-xs font-semibold text-emerald-200">
+                  Carregando imagem e posicionando pentagramas...
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Mixer */}
+        {showMixer && (
+          <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
+              <span className="text-xs font-bold text-gray-200">Mixer & Timbre</span>
+              <span className="text-[10px] text-amber-400 font-mono">{systems.length} Pautas</span>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-gray-400 block mb-1">Instrumento:</span>
+              <div className="grid grid-cols-3 gap-1">
+                {(["sax", "piano", "organ"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setInstrument(t)}
+                    className={`py-1 text-[10px] rounded capitalize transition ${
+                      instrument === t
+                        ? "bg-amber-500 text-black font-bold"
+                        : "bg-gray-800 text-gray-300"
+                    }`}
+                  >
+                    {t === "sax" ? "Sax" : t === "piano" ? "Piano" : "Órgão"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>Volume:</span>
+                <span>{volume}%</span>
+              </div>
+              <Slider
+                value={[volume]}
+                onValueChange={(val) => setVolume(val[0])}
+                max={100}
+                step={1}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>Transposição:</span>
