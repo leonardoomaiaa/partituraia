@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BottomNav } from "@/components/BottomNav";
-import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import {
   Upload,
   Play,
@@ -18,7 +16,6 @@ import {
   ArrowLeft,
   FileMusic,
 } from "lucide-react";
-import { toast } from "sonner";
 
 export const Route = createFileRoute("/leitor")({
   component: LeitorRoute,
@@ -166,10 +163,7 @@ function LeitorRoute() {
       setCurrentNoteIndex(0);
       setCursorX(generatedSystems[0].notes[0].xPercent);
       setIsProcessing(false);
-      toast.success("Partitura carregada com sucesso!", {
-        description: `Exibindo: ${title}`,
-      });
-    }, 300);
+    }, 250);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -306,14 +300,12 @@ function LeitorRoute() {
       {/* Topo / Barra Superior */}
       <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
+          <button
             onClick={() => navigate({ to: "/" })}
-            className="text-gray-400 hover:text-white h-8 w-8"
+            className="text-gray-400 hover:text-white p-1 rounded-lg transition"
           >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
+            <ArrowLeft className="w-5 h-5" />
+          </button>
           <div>
             <h1 className="text-xs font-bold flex items-center gap-1.5 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -327,17 +319,15 @@ function LeitorRoute() {
           </div>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
+        <button
           onClick={() => setShowMixer(!showMixer)}
-          className={`border-gray-700 h-7 px-2.5 text-[11px] flex items-center gap-1.5 ${
+          className={`border border-gray-700 h-7 px-2.5 rounded-md text-[11px] flex items-center gap-1.5 transition ${
             showMixer ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : "text-gray-300"
           }`}
         >
-          <SlidersHorizontal className="w-3 h-3" />
+          <SlidersHorizontal className="w-3.5 h-3.5" />
           <span>Mixer</span>
-        </Button>
+        </button>
       </header>
 
       {/* Área Central: Caixa de Upload OU Imagem Real Selecionada */}
@@ -352,11 +342,9 @@ function LeitorRoute() {
               Fotografe com a câmara ou selecione uma imagem do seu computador para iniciar a leitura.
             </p>
             <label className="cursor-pointer">
-              <Button asChild size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-black font-semibold shadow-lg">
-                <span className="flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5" /> Selecionar Imagem
-                </span>
-              </Button>
+              <span className="inline-flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs py-2 px-4 rounded-lg shadow-lg transition">
+                <Upload className="w-4 h-4" /> Selecionar Imagem
+              </span>
               <input
                 type="file"
                 accept="image/*"
@@ -433,15 +421,114 @@ function LeitorRoute() {
                 <span>Volume:</span>
                 <span>{volume}%</span>
               </div>
-              <Slider
-                value={[volume]}
-                onValueChange={(val) => setVolume(val[0])}
-                max={100}
-                step={1}
-                className="w-full"
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={volume}
+                onChange={(e) => setVolume(Number(e.target.value))}
+                className="w-full accent-emerald-500 cursor-pointer"
               />
             </div>
 
             <div>
               <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                 <span>Transposição:</span>
+                <span className="font-mono text-amber-400">
+                  {transposeSemi > 0 ? `+${transposeSemi}` : transposeSemi} ST
+                </span>
+              </div>
+              <div className="flex items-center justify-between bg-[#0A0C12] p-1 rounded-lg border border-gray-800">
+                <button
+                  className="h-6 w-6 text-gray-300 flex items-center justify-center hover:bg-gray-800 rounded"
+                  onClick={() => setTransposeSemi((p) => p - 1)}
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[11px] font-mono font-bold">{transposeSemi} semitons</span>
+                <button
+                  className="h-6 w-6 text-gray-300 flex items-center justify-center hover:bg-gray-800 rounded"
+                  onClick={() => setTransposeSemi((p) => p + 1)}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Barra Inferior com Controles e Botão da Câmara */}
+      <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2.5 flex flex-col gap-2 z-20 shadow-lg">
+        <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleReset}
+              className="text-gray-400 hover:text-white p-2 rounded-lg transition"
+              title="Voltar ao início"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              className={`h-10 w-10 rounded-full shadow-lg flex items-center justify-center transition-transform active:scale-95 ${
+                isPlaying
+                  ? "bg-red-500 hover:bg-red-600 text-white"
+                  : "bg-emerald-500 hover:bg-emerald-600 text-black"
+              }`}
+            >
+              {isPlaying ? (
+                <Pause className="w-4 h-4 fill-current" />
+              ) : (
+                <Play className="w-4 h-4 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <button
+              onClick={() => setIsMuted(!isMuted)}
+              className="text-gray-400 hover:text-white p-2 rounded-lg transition"
+            >
+              {isMuted ? (
+                <VolumeX className="w-4 h-4 text-red-400" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+
+          <div className="flex-1 flex items-center gap-2 max-w-xs">
+            <input
+              type="range"
+              min="40"
+              max="180"
+              value={bpm}
+              onChange={(e) => setBpm(Number(e.target.value))}
+              className="flex-1 accent-emerald-500 cursor-pointer"
+            />
+            <div className="text-right w-14 font-mono text-[11px] text-gray-300">
+              ♩ = <span className="font-bold text-amber-400">{bpm}</span>
+            </div>
+          </div>
+
+          <label className="cursor-pointer">
+            <div
+              className="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-300 border border-gray-700 transition"
+              title="Carregar Nova Imagem"
+            >
+              <Camera className="w-4 h-4" />
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+        </div>
+      </footer>
+
+      <BottomNav />
+    </div>
+  );
+}
