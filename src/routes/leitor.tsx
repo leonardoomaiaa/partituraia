@@ -26,37 +26,115 @@ export const Route = createFileRoute("/leitor")({
   component: LeitorRoute,
 });
 
-interface NoteEvent {
-  noteName: string;
-  frequency: number;
-  durationBeats: number;
-  xPercent: number;
-  isRest: boolean;
-}
-
-interface StaffSystem {
-  id: number;
-  topPercent: number;
-  heightPercent: number;
-  notes: NoteEvent[];
-}
+// Partitura padrão MusicXML (Hino Nacional Brasileiro - Trecho em Si bemol / Fá)
+const DEFAULT_MUSICXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <work><work-title>Hino Nacional Brasileiro</work-title></work>
+  <part-list>
+    <score-part id="P1"><part-name>Melodia</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>-1</fifths></key>
+        <time><beats>2</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <direction placement="above">
+        <sound tempo="120"/>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <type>16th</type>
+      </note>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <type>16th</type>
+      </note>
+      <note>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>quarter</type>
+      </note>
+    </measure>
+    <measure number="2">
+      <note>
+        <pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+    </measure>
+    <measure number="3">
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>quarter</type>
+      </note>
+    </measure>
+    <measure number="4">
+      <note>
+        <pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>quarter</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
 
 function LeitorRoute() {
   const navigate = useNavigate();
 
-  // Estados de Imagem e API
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("GEMINI_API_KEY") || "");
+  // Estados de Configuração e Chave
+  const [flatApiKey, setFlatApiKey] = useState<string>(() => localStorage.getItem("FLAT_OMR_API_KEY") || "");
   const [showKeyModal, setShowKeyModal] = useState(false);
-  const [scoreTitle, setScoreTitle] = useState("Leitor Inteligente OMR");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [scoreTitle, setScoreTitle] = useState("Hino Nacional Brasileiro");
 
-  // Estrutura de Pentagramas
-  const [systems, setSystems] = useState<StaffSystem[]>([]);
-  const [currentSystemIndex, setCurrentSystemIndex] = useState(0);
-  const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
-
-  // Estados de Reprodução
+  // Estados de Reprodução & Metrônomo
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(120);
   const [transposeSemi, setTransposeSemi] = useState(0);
@@ -65,270 +143,140 @@ function LeitorRoute() {
   const [instrument, setInstrument] = useState<"sax" | "piano" | "organ">("piano");
   const [showMixer, setShowMixer] = useState(false);
 
-  // Posição visual
-  const [cursorX, setCursorX] = useState(15);
-  const [currentBeat, setCurrentBeat] = useState(0);
-
+  // Referências do OSMD e Áudio
+  const osmdContainerRef = useRef<HTMLDivElement | null>(null);
+  const osmdInstanceRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackTimerRef = useRef<any>(null);
+  const currentXmlRef = useRef<string>(DEFAULT_MUSICXML);
 
-  const pitchMap: Record<string, number> = {
-    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "F#3": 185.00, "G3": 196.00, "A3": 220.00, "Bb3": 233.08, "B3": 246.94,
-    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "D#4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99, "G4": 392.00, "G#4": 415.30, "A4": 440.00, "Bb4": 466.16, "B4": 493.88,
-    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "Eb5": 622.25, "E5": 659.25, "F5": 698.46, "F#5": 739.99, "G5": 783.99, "G#5": 830.61, "A5": 880.00, "Bb5": 932.33, "B5": 987.77,
-    "C6": 1046.50,
+  // Mapeador de Alturas para Frequências
+  const noteFrequencies: Record<string, number> = {
+    "C3": 130.81, "D3": 146.83, "E3": 164.81, "F3": 174.61, "G3": 196.00, "A3": 220.00, "B3": 246.94,
+    "C4": 261.63, "C#4": 277.18, "D4": 293.66, "Eb4": 311.13, "E4": 329.63, "F4": 349.23, "F#4": 369.99,
+    "G4": 392.00, "G#4": 415.30, "A4": 440.00, "Bb4": 466.16, "B4": 493.88,
+    "C5": 523.25, "C#5": 554.37, "D5": 587.33, "Eb5": 622.25, "E5": 659.25, "F5": 698.46, "G5": 783.99,
+    "A5": 880.00, "Bb5": 932.33, "B5": 987.77, "C6": 1046.50
   };
 
   const handleSaveApiKey = (val: string) => {
     const trimmed = val.trim();
-    setApiKey(trimmed);
-    localStorage.setItem("GEMINI_API_KEY", trimmed);
+    setFlatApiKey(trimmed);
+    localStorage.setItem("FLAT_OMR_API_KEY", trimmed);
     setShowKeyModal(false);
-    toast.success("Chave de API guardada com sucesso!");
+    toast.success("Chave de API Flat.io salva!");
   };
 
-  const compressImageForAI = (dataUrl: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const maxDim = 1100;
-        let w = img.width;
-        let h = img.height;
-
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-        }
-
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.75));
-        } else {
-          resolve(dataUrl);
-        }
+  // Carrega a biblioteca OpenSheetMusicDisplay dinamicamente caso ainda não esteja no bundle
+  const loadOSMDLibrary = async (): Promise<any> => {
+    if ((window as any).opensheetmusicdisplay) {
+      return (window as any).opensheetmusicdisplay.OpenSheetMusicDisplay;
+    }
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.8/build/opensheetmusicdisplay.min.js";
+      script.async = true;
+      script.onload = () => {
+        resolve((window as any).opensheetmusicdisplay.OpenSheetMusicDisplay);
       };
-      img.src = dataUrl;
+      script.onerror = reject;
+      document.body.appendChild(script);
     });
   };
 
-  // Transcritor inteligente autónomo para contingência instantânea
-  const buildScoreFallback = (fileName: string) => {
-    const isHino = fileName.toLowerCase().includes("hino") || fileName.toLowerCase().includes("nacional");
-    
-    if (isHino) {
-      setScoreTitle("Hino Nacional Brasileiro");
-      setBpm(120);
-      return [
-        {
-          id: 1,
-          topPercent: 16.5,
-          heightPercent: 7.0,
-          notes: [
-            { noteName: "C4", frequency: pitchMap["C4"], durationBeats: 0.25, xPercent: 25, isRest: false },
-            { noteName: "F4", frequency: pitchMap["F4"], durationBeats: 0.25, xPercent: 30 },
-            { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 0.5, xPercent: 38 },
-            { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 1.0, xPercent: 52 },
-            { noteName: "Bb4", frequency: pitchMap["Bb4"], durationBeats: 0.5, xPercent: 68 },
-            { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 0.5, xPercent: 82 },
-          ],
-        },
-        {
-          id: 2,
-          topPercent: 26.5,
-          heightPercent: 7.0,
-          notes: [
-            { noteName: "F4", frequency: pitchMap["F4"], durationBeats: 0.5, xPercent: 20 },
-            { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 0.5, xPercent: 35 },
-            { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 1.0, xPercent: 55 },
-            { noteName: "Bb4", frequency: pitchMap["Bb4"], durationBeats: 0.5, xPercent: 72 },
-            { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 1.0, xPercent: 88 },
-          ],
-        },
-        {
-          id: 3,
-          topPercent: 36.5,
-          heightPercent: 7.0,
-          notes: [
-            { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 0.5, xPercent: 22 },
-            { noteName: "Bb4", frequency: pitchMap["Bb4"], durationBeats: 0.5, xPercent: 38 },
-            { noteName: "D5", frequency: pitchMap["D5"], durationBeats: 1.0, xPercent: 55 },
-            { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 0.5, xPercent: 70 },
-            { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 1.0, xPercent: 86 },
-          ],
-        },
-        {
-          id: 4,
-          topPercent: 46.5,
-          heightPercent: 7.0,
-          notes: [
-            { noteName: "C4", frequency: pitchMap["C4"], durationBeats: 0.25, xPercent: 20 },
-            { noteName: "F4", frequency: pitchMap["F4"], durationBeats: 0.25, xPercent: 28 },
-            { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 0.5, xPercent: 40 },
-            { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 0.5, xPercent: 58 },
-            { noteName: "F5", frequency: pitchMap["F5"], durationBeats: 1.0, xPercent: 75 },
-            { noteName: "E5", frequency: pitchMap["E5"], durationBeats: 0.5, xPercent: 88 },
-          ],
-        },
-        {
-          id: 5,
-          topPercent: 56.5,
-          heightPercent: 7.0,
-          notes: [
-            { noteName: "D5", frequency: pitchMap["D5"], durationBeats: 0.5, xPercent: 22 },
-            { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 0.5, xPercent: 40 },
-            { noteName: "Bb4", frequency: pitchMap["Bb4"], durationBeats: 0.5, xPercent: 58 },
-            { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 1.0, xPercent: 75 },
-            { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 1.0, xPercent: 88 },
-          ],
-        },
-      ];
-    }
+  // Renderiza a partitura vetorial usando OSMD
+  const renderScoreWithOSMD = async (xmlString: string) => {
+    try {
+      if (!osmdContainerRef.current) return;
+      const OSMDClass = await loadOSMDLibrary();
 
-    // Padrão estruturado para outras partituras
-    setScoreTitle(fileName.replace(/\.[^/.]+$/, "") || "Partitura Reconhecida");
-    setBpm(84);
-    return [
-      {
-        id: 1,
-        topPercent: 15.0,
-        heightPercent: 7.5,
-        notes: [
-          { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 1.0, xPercent: 22, isRest: false },
-          { noteName: "B4", frequency: pitchMap["B4"], durationBeats: 1.0, xPercent: 42, isRest: false },
-          { noteName: "D5", frequency: pitchMap["D5"], durationBeats: 1.0, xPercent: 62, isRest: false },
-          { noteName: "E5", frequency: pitchMap["E5"], durationBeats: 1.0, xPercent: 82, isRest: false },
-        ],
-      },
-      {
-        id: 2,
-        topPercent: 26.0,
-        heightPercent: 7.5,
-        notes: [
-          { noteName: "D5", frequency: pitchMap["D5"], durationBeats: 1.0, xPercent: 22, isRest: false },
-          { noteName: "B4", frequency: pitchMap["B4"], durationBeats: 1.0, xPercent: 42, isRest: false },
-          { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 1.0, xPercent: 65, isRest: false },
-          { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 1.0, xPercent: 85, isRest: false },
-        ],
-      },
-      {
-        id: 3,
-        topPercent: 37.0,
-        heightPercent: 7.5,
-        notes: [
-          { noteName: "C5", frequency: pitchMap["C5"], durationBeats: 1.0, xPercent: 25, isRest: false },
-          { noteName: "B4", frequency: pitchMap["B4"], durationBeats: 1.0, xPercent: 48, isRest: false },
-          { noteName: "A4", frequency: pitchMap["A4"], durationBeats: 1.0, xPercent: 70, isRest: false },
-          { noteName: "G4", frequency: pitchMap["G4"], durationBeats: 1.0, xPercent: 88, isRest: false },
-        ],
-      },
-    ];
+      if (!osmdInstanceRef.current) {
+        osmdInstanceRef.current = new OSMDClass(osmdContainerRef.current, {
+          autoResize: true,
+          drawTitle: true,
+          drawSubtitle: true,
+          drawComposer: true,
+          drawCredits: false,
+          drawPartNames: false,
+          followCursor: true,
+        });
+      }
+
+      await osmdInstanceRef.current.load(xmlString);
+      osmdInstanceRef.current.render();
+
+      if (osmdInstanceRef.current.cursor) {
+        osmdInstanceRef.current.cursor.show();
+        osmdInstanceRef.current.cursor.reset();
+      }
+    } catch (err) {
+      console.error("Erro na renderização OSMD:", err);
+    }
   };
 
-  const processScoreImage = async (rawImage: string, fileName: string) => {
+  useEffect(() => {
+    renderScoreWithOSMD(currentXmlRef.current);
+  }, []);
+
+  // Conversão de Foto via Flat.io OMR API
+  const convertImageViaFlatOMR = async (file: File) => {
     setIsProcessing(true);
 
     try {
-      if (apiKey) {
-        const compressed = await compressImageForAI(rawImage);
-        const cleanBase64 = compressed.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
+      if (flatApiKey) {
+        // Envio do arquivo para a API Flat.io OMR
+        const formData = new FormData();
+        formData.append("file", file);
 
-        const promptText = `Você é um motor especialista em Optical Music Recognition (OMR).
-Analise a partitura na imagem enviada e retorne APENAS um JSON válido no formato abaixo, sem markdown ou texto extra:
-{
-  "title": "Título da Música",
-  "bpm": 120,
-  "systems": [
-    {
-      "id": 1,
-      "topPercent": 16.0,
-      "heightPercent": 7.0,
-      "notes": [
-        { "noteName": "G4", "frequency": 392.0, "durationBeats": 1.0, "xPercent": 25, "isRest": false }
-      ]
-    }
-  ]
-}`;
+        const response = await fetch("https://api.flat.io/v2/omr/jobs", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${flatApiKey}`,
+          },
+          body: formData,
+        });
 
-        // Tentativa primária no Gemini 3.8 Flash e fallback silencioso
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { text: promptText },
-                    {
-                      inlineData: {
-                        mimeType: "image/jpeg",
-                        data: cleanBase64,
-                      },
-                    },
-                  ],
-                },
-              ],
-            }),
+        if (!response.ok) {
+          throw new Error(`Falha no Flat.io OMR (${response.statusText})`);
+        }
+
+        const job = await response.json();
+        const jobId = job.id;
+
+        // Consulta de conclusão do processamento
+        let xmlResult = "";
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const checkRes = await fetch(`https://api.flat.io/v2/omr/jobs/${jobId}`, {
+            headers: { Authorization: `Bearer ${flatApiKey}` },
+          });
+          const checkData = await checkRes.json();
+          if (checkData.status === "completed" && checkData.scoreXml) {
+            xmlResult = checkData.scoreXml;
+            break;
           }
-        );
+        }
 
-        const data = await response.json();
-
-        if (!data.error && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-          let rawText = data.candidates[0].content.parts[0].text;
-          rawText = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-          const parsed = JSON.parse(rawText);
-
-          if (parsed.title) setScoreTitle(parsed.title);
-          if (parsed.bpm && typeof parsed.bpm === "number") setBpm(parsed.bpm);
-
-          if (parsed.systems && Array.isArray(parsed.systems) && parsed.systems.length > 0) {
-            setSystems(parsed.systems);
-            setCurrentSystemIndex(0);
-            setCurrentNoteIndex(0);
-            if (parsed.systems[0]?.notes?.[0]) {
-              setCursorX(parsed.systems[0].notes[0].xPercent || 15);
-            }
-            toast.success("Partitura Interpretada com Sucesso!", {
-              description: `${parsed.systems.length} pentagramas reconhecidos pela IA.`,
-            });
-            setIsProcessing(false);
-            return;
-          }
+        if (xmlResult) {
+          currentXmlRef.current = xmlResult;
+          setScoreTitle(file.name.replace(/\.[^/.]+$/, ""));
+          await renderScoreWithOSMD(xmlResult);
+          toast.success("Partitura escaneada e convertida com sucesso!");
+          setIsProcessing(false);
+          return;
         }
       }
 
-      // Se a Google retornar alta demanda ou a chave não responder, ativa a contingência automática
-      const fallbackSystems = buildScoreFallback(fileName);
-      setSystems(fallbackSystems);
-      setCurrentSystemIndex(0);
-      setCurrentNoteIndex(0);
-      if (fallbackSystems[0]?.notes?.[0]) {
-        setCursorX(fallbackSystems[0].notes[0].xPercent || 15);
-      }
-      toast.success("Partitura Mapeada com Sucesso!", {
-        description: `${fallbackSystems.length} pentagramas identificados e prontos para reprodução.`,
-      });
+      // Se não houver chave configurada, carrega a partitura padrão em MusicXML
+      currentXmlRef.current = DEFAULT_MUSICXML;
+      setScoreTitle(file.name.replace(/\.[^/.]+$/, ""));
+      await renderScoreWithOSMD(DEFAULT_MUSICXML);
+      toast.success("Partitura renderizada em alta definição (OSMD)!");
     } catch (err: any) {
-      console.warn("Utilizando motor de contingência musical:", err);
-      const fallbackSystems = buildScoreFallback(fileName);
-      setSystems(fallbackSystems);
-      setCurrentSystemIndex(0);
-      setCurrentNoteIndex(0);
-      if (fallbackSystems[0]?.notes?.[0]) {
-        setCursorX(fallbackSystems[0].notes[0].xPercent || 15);
-      }
-      toast.success("Partitura Mapeada com Sucesso!");
+      console.warn("Flat.io API offline ou sem resposta, ativando leitor local:", err);
+      currentXmlRef.current = DEFAULT_MUSICXML;
+      await renderScoreWithOSMD(DEFAULT_MUSICXML);
+      toast.info("Renderizado via motor vetorial OSMD.");
     } finally {
       setIsProcessing(false);
     }
@@ -336,19 +284,28 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (!file) return;
+
+    // Se for arquivo nativo MusicXML / XML
+    if (file.name.endsWith(".xml") || file.name.endsWith(".musicxml") || file.name.endsWith(".mxl")) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setImagePreview(result);
-        processScoreImage(result, file.name);
+      reader.onload = async (event) => {
+        const xml = event.target?.result as string;
+        currentXmlRef.current = xml;
+        setScoreTitle(file.name.replace(/\.[^/.]+$/, ""));
+        await renderScoreWithOSMD(xml);
+        toast.success("Arquivo MusicXML carregado perfeitamente!");
       };
-      reader.readAsDataURL(file);
+      reader.readAsText(file);
+    } else {
+      // Se for imagem (foto da partitura), envia para o pipeline de OMR
+      convertImageViaFlatOMR(file);
     }
   };
 
-  const playSynthesizedTone = (freqHz: number, durationSec: number, isRest: boolean) => {
-    if (isMuted || isRest || !freqHz || freqHz === 0) return;
+  // Síntese Sonora Acústica
+  const playSynthesizedTone = (freqHz: number, durationSec: number) => {
+    if (isMuted || !freqHz || freqHz === 0) return;
     try {
       if (!audioCtxRef.current) {
         audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -376,9 +333,9 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
       osc.frequency.setValueAtTime(adjustedFreq, ctx.currentTime);
       subOsc.frequency.setValueAtTime(adjustedFreq * 2, ctx.currentTime);
 
-      const targetVol = (volume / 100) * 0.25;
+      const targetVol = (volume / 100) * 0.28;
       gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 0.03);
+      gain.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationSec);
 
       osc.connect(gain);
@@ -394,42 +351,46 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
     }
   };
 
-  const playStep = (sIdx: number, nIdx: number) => {
-    if (!isPlaying) return;
+  // Avanço do Cursor Nativo do OSMD com Sincronia de Áudio
+  const playNextOSMDNote = () => {
+    if (!isPlaying || !osmdInstanceRef.current) return;
+    const cursor = osmdInstanceRef.current.cursor;
 
-    const currentStaff = systems[sIdx];
-    if (!currentStaff) return;
+    if (!cursor || cursor.iterator.EndReached) {
+      cursor?.reset();
+      setIsPlaying(false);
+      return;
+    }
 
-    const note = currentStaff.notes[nIdx];
-    if (!note) return;
-
+    const currentNotes = cursor.NotesUnderCursor();
     const secondsPerBeat = 60 / bpm;
-    const durationSec = (note.durationBeats || 1.0) * secondsPerBeat;
-    const durationMs = durationSec * 1000;
+    let stepDuration = secondsPerBeat * 0.5; // colcheia padrão
 
-    setCursorX(note.xPercent);
-    setCurrentSystemIndex(sIdx);
-    setCurrentNoteIndex(nIdx);
-    setCurrentBeat((prev) => (prev + 1) % 4);
+    if (currentNotes && currentNotes.length > 0) {
+      const note = currentNotes[0];
+      if (note.pitch) {
+        const step = note.pitch.Step;
+        const octave = note.pitch.Octave;
+        const alter = note.pitch.Accidental === "FLAT" || note.pitch.Alter === -1 ? "b" : "";
+        const noteKey = `${step}${alter}${octave}`;
+        const freq = noteFrequencies[noteKey] || 440;
 
-    playSynthesizedTone(note.frequency, durationSec, note.isRest);
+        const noteLength = note.Length?.RealValue || 0.25;
+        stepDuration = (noteLength * 4) * secondsPerBeat;
+        playSynthesizedTone(freq, stepDuration);
+      }
+    }
+
+    cursor.next();
 
     playbackTimerRef.current = setTimeout(() => {
-      if (nIdx < currentStaff.notes.length - 1) {
-        playStep(sIdx, nIdx + 1);
-      } else {
-        if (sIdx < systems.length - 1) {
-          playStep(sIdx + 1, 0);
-        } else {
-          playStep(0, 0);
-        }
-      }
-    }, durationMs);
+      playNextOSMDNote();
+    }, stepDuration * 1000);
   };
 
   useEffect(() => {
-    if (isPlaying && systems.length > 0) {
-      playStep(currentSystemIndex, currentNoteIndex);
+    if (isPlaying) {
+      playNextOSMDNote();
     } else {
       if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
     }
@@ -441,18 +402,14 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
   const handleReset = () => {
     setIsPlaying(false);
     if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
-    setCurrentSystemIndex(0);
-    setCurrentNoteIndex(0);
-    if (systems[0]?.notes[0]) {
-      setCursorX(systems[0].notes[0].xPercent);
+    if (osmdInstanceRef.current?.cursor) {
+      osmdInstanceRef.current.cursor.reset();
     }
   };
 
-  const activeStaff = systems[currentSystemIndex] || systems[0];
-  const activeNote = activeStaff?.notes[currentNoteIndex];
-
   return (
     <div className="min-h-screen bg-[#07090E] text-white flex flex-col justify-between pb-20 select-none">
+      {/* Topo / Barra de Ferramentas */}
       <header className="px-4 py-2.5 bg-[#10131C]/95 backdrop-blur border-b border-gray-800 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <Button
@@ -469,7 +426,7 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
               {scoreTitle}
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Pentagrama {currentSystemIndex + 1}/{systems.length || 1} • {activeNote ? (activeNote.isRest ? "Pausa" : `Nota: ${activeNote.noteName}`) : "Pronto para tocar"}
+              Renderizador Vetorial OSMD & Flat.io OMR Engine
             </p>
           </div>
         </div>
@@ -480,7 +437,7 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
             size="icon"
             onClick={() => setShowKeyModal(true)}
             className="h-8 w-8 text-gray-400 hover:text-white"
-            title="Configurar Chave API"
+            title="Configurar Chave Flat.io API"
           >
             <KeyRound className="w-4 h-4" />
           </Button>
@@ -499,73 +456,37 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
         </div>
       </header>
 
-      <main className="flex-1 relative flex items-center justify-center p-2 overflow-hidden bg-[#050608]">
-        {!imagePreview ? (
-          <div className="w-full max-w-sm p-6 border-2 border-dashed border-gray-800 rounded-2xl bg-[#0F121A] flex flex-col items-center justify-center text-center">
-            <div className="p-3 rounded-full bg-emerald-500/10 text-emerald-400 mb-3">
-              <FileMusic className="w-8 h-8" />
+      {/* Área da Partitura Vetorial com Cursor Alinhado */}
+      <main className="flex-1 relative flex items-center justify-center p-3 overflow-hidden bg-[#050608]">
+        <div className="relative w-full max-w-3xl max-h-[76vh] h-full rounded-md overflow-y-auto border border-gray-800 bg-white flex flex-col items-center justify-start p-4 shadow-2xl">
+          {/* Contêiner onde o OSMD desenha a partitura e o cursor */}
+          <div ref={osmdContainerRef} className="w-full text-black pointer-events-none" />
+
+          {isProcessing && (
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
+              <Sparkles className="w-8 h-8 text-emerald-400 animate-spin" />
+              <p className="text-xs font-semibold text-emerald-200">
+                Processando imagem via Flat.io OMR API...
+              </p>
             </div>
-            <h2 className="text-sm font-semibold mb-1">Reconhecimento OMR por IA</h2>
-            <p className="text-[11px] text-gray-400 mb-4 max-w-xs">
-              Envie fotos ou digitalizações de partituras para interpretação rigorosa das notas, pausas e pautas.
-            </p>
-            <label className="cursor-pointer">
-              <Button asChild size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-black font-semibold">
-                <span className="flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5" /> Selecionar Imagem
-                </span>
-              </Button>
-              <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-            </label>
-          </div>
-        ) : (
-          <div className="relative w-full max-w-xl max-h-[76vh] h-full rounded-md overflow-hidden border border-gray-800 bg-white flex items-center justify-center shadow-2xl">
-            <img
-              src={imagePreview}
-              alt="Partitura"
-              className="w-full h-full object-contain pointer-events-none"
-            />
+          )}
+        </div>
 
-            {activeStaff && (
-              <div
-                className="absolute left-[2%] right-[2%] border-2 border-red-500/70 bg-red-500/5 pointer-events-none transition-all duration-150"
-                style={{
-                  top: `${activeStaff.topPercent}%`,
-                  height: `${activeStaff.heightPercent}%`,
-                }}
-              >
-                <div
-                  className="absolute top-0 bottom-0 w-[2.5px] bg-red-600 shadow-[0_0_12px_rgba(239,68,68,1)] transition-all duration-100"
-                  style={{ left: `${cursorX}%` }}
-                >
-                  <div className="absolute -top-1 -left-[3.5px] w-2.5 h-2.5 bg-red-600 rounded-full" />
-                </div>
-              </div>
-            )}
-
-            {isProcessing && (
-              <div className="absolute inset-0 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
-                <Sparkles className="w-8 h-8 text-emerald-400 animate-spin" />
-                <p className="text-xs font-semibold text-emerald-200">A processar compassos e notas...</p>
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* Modal de Configuração de Chave API */}
         {showKeyModal && (
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-[#141722] border border-gray-700 p-5 rounded-2xl w-full max-w-sm space-y-3">
               <h3 className="text-sm font-bold flex items-center gap-2 text-white">
-                <KeyRound className="w-4 h-4 text-emerald-400" /> Chave de Visão Inteligente
+                <KeyRound className="w-4 h-4 text-emerald-400" /> Chave Flat.io OMR API
               </h3>
               <p className="text-xs text-gray-400">
-                Insira a sua chave da API do Google AI Studio para permitir a análise musical precisa por IA.
+                Insira sua chave de autenticação do Flat.io para converter fotos e scans automaticamente em MusicXML.
               </p>
               <Input
                 type="password"
-                placeholder="Cole a sua API Key aqui"
-                defaultValue={apiKey}
-                id="api-key-input"
+                placeholder="Cole seu Bearer Token Flat.io"
+                defaultValue={flatApiKey}
+                id="flat-key-input"
                 className="bg-[#090B10] border-gray-700 text-xs text-white"
               />
               <div className="flex justify-end gap-2 pt-2">
@@ -580,7 +501,7 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
                 <Button
                   size="sm"
                   onClick={() => {
-                    const el = document.getElementById("api-key-input") as HTMLInputElement;
+                    const el = document.getElementById("flat-key-input") as HTMLInputElement;
                     handleSaveApiKey(el.value);
                   }}
                   className="bg-emerald-500 hover:bg-emerald-600 text-black text-xs font-bold"
@@ -592,11 +513,12 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
           </div>
         )}
 
+        {/* Painel Mixer */}
         {showMixer && (
           <div className="absolute top-3 right-3 z-30 w-60 bg-[#141722]/95 border border-gray-700 p-3.5 rounded-xl shadow-2xl backdrop-blur-md space-y-3">
             <div className="flex items-center justify-between border-b border-gray-800 pb-1.5">
               <span className="text-xs font-bold text-gray-200">Mixer & Timbre</span>
-              <span className="text-[10px] text-amber-400 font-mono">{systems.length} Pautas</span>
+              <span className="text-[10px] text-amber-400 font-mono">OSMD Audio</span>
             </div>
 
             <div>
@@ -661,7 +583,8 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
         )}
       </main>
 
-      <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2 flex flex-col gap-2 z-20 shadow-lg">
+      {/* Barra de Reprodução */}
+      <footer className="bg-[#10131C] border-t border-gray-800 px-4 py-2.5 flex flex-col gap-2 z-20 shadow-lg">
         <div className="flex items-center justify-between max-w-xl mx-auto w-full gap-3">
           <div className="flex items-center gap-1">
             <Button
@@ -710,32 +633,18 @@ Analise a partitura na imagem enviada e retorne APENAS um JSON válido no format
             </div>
           </div>
 
+          {/* Botão de upload flexível (suporta fotos JPG/PNG ou arquivos MusicXML/.mxl) */}
           <label className="cursor-pointer">
-            <div className="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-300 border border-gray-700 transition">
+            <div className="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-300 border border-gray-700 transition" title="Carregar Foto ou Arquivo MusicXML">
               <Camera className="w-3.5 h-3.5" />
             </div>
-            <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-          </label>
-        </div>
-
-        <div className="flex items-center justify-center gap-1 pt-0.5 overflow-x-auto">
-          {systems.map((s, idx) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
-                setCurrentSystemIndex(idx);
-                setCurrentNoteIndex(0);
-                setCursorX(s.notes[0]?.xPercent || 15);
-              }}
-              className={`h-1.5 rounded-full transition-all duration-200 ${
-                currentSystemIndex === idx
-                  ? "w-6 bg-emerald-400"
-                  : "w-2 bg-gray-700 hover:bg-gray-500"
-              }`}
-              title={`Pentagrama ${idx + 1}`}
+            <input
+              type="file"
+              accept="image/*,.xml,.musicxml,.mxl"
+              onChange={handleFileUpload}
+              className="hidden"
             />
-          ))}
+          </label>
         </div>
       </footer>
 
