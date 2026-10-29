@@ -9,7 +9,6 @@ import {
   Sparkles,
   RotateCcw,
   Music2,
-  FileText,
   Layers,
   Edit3,
 } from "lucide-react";
@@ -18,6 +17,9 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/leitor")({
   component: TranspositorDinamicoReal,
 });
+
+type ModoVisualizacao = "completo" | "grupo1" | "grupo2";
+type Acidente = "bemol" | "sustenido" | "auto";
 
 // Tabela cromática de 12 semitons
 const NOTAS_SEMITONS: Record<string, number> = {
@@ -36,11 +38,25 @@ const NOTAS_SEMITONS: Record<string, number> = {
 };
 
 const TABELA_SUSTENIDOS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const TABELA_BEMOIS    = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const TABELA_BEMOIS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+// Nomes "de tom" mais usuais para cada semitom (usado nos atalhos de instrumento)
+const TABELA_TONS_PADRAO = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 
 const TONS_DISPONIVEIS = [
-  "C", "C#", "Db", "D", "Eb", "E", "F", "F#", "Gb", "G", "Ab", "A", "Bb", "B"
+  "C", "C#", "Db", "D", "Eb", "E", "F", "F#", "Gb", "G", "Ab", "A", "Bb", "B",
 ];
+
+// Tons que, por armadura, são escritos com bemóis ou com sustenidos.
+// C (sem acidentes) fica em "auto": mantém a grafia original de cada acorde.
+const TONS_COM_BEMOL = new Set(["F", "Bb", "Eb", "Ab", "Db", "Gb"]);
+const TONS_COM_SUSTENIDO = new Set(["G", "D", "A", "E", "B", "F#", "C#"]);
+
+function acidenteDoTom(tom: string): Acidente {
+  if (TONS_COM_BEMOL.has(tom)) return "bemol";
+  if (TONS_COM_SUSTENIDO.has(tom)) return "sustenido";
+  return "auto";
+}
 
 const INSTRUMENTOS_PRESET = [
   { id: "original", nome: "Original", semitons: 0 },
@@ -51,15 +67,32 @@ const INSTRUMENTOS_PRESET = [
 ];
 
 // GRUPO 1: Identifica estritamente notas e cifras musicais reais
-const REGEX_GRUPO1_CIFRA = /^[A-G][#b]?(?:m|min|maj|M|dim|aug|sus[24]?|[0-9]+|\+|º|°)*(?:\/[A-G][#b]?)?$/;
+const REGEX_GRUPO1_CIFRA =
+  /^[A-G][#b]?(?:m|min|maj|M|dim|aug|add|sus[24]?|[#b][0-9]+|[0-9]+|\+|º|°|-)*(?:\/[A-G][#b]?)?$/;
 
-// Transpõe o Grupo 1 mantendo acidentes e baixos invertidos
-function transporGrupo1(cifra: string, semitons: number, preferirBemol: boolean): string {
+const limparToken = (t: string) => t.replace(/[\[\]()]/g, "");
+
+// Uma linha só é "linha de cifras" se TODOS os seus tokens forem cifras
+// (ou separadores neutros como | - x2) e houver ao menos uma cifra.
+// Isso evita que palavras da letra, como "A" ou "E", sejam transpostas.
+function ehLinhaDeCifras(linha: string): boolean {
+  const tokens = linha.split(/\s+/).map(limparToken).filter(Boolean);
+  let acordes = 0;
+  for (const t of tokens) {
+    if (REGEX_GRUPO1_CIFRA.test(t)) acordes++;
+    else if (/^(\||-|–|\/|x\d+)$/i.test(t)) continue;
+    else return false;
+  }
+  return acordes > 0;
+}
+
+// Transpõe o Grupo 1 mantendo sufixos e baixos invertidos
+function transporGrupo1(cifra: string, semitons: number, acidente: Acidente): string {
   if (semitons === 0) return cifra;
 
   if (cifra.includes("/")) {
     const [acorde, baixo] = cifra.split("/");
-    return `${transporGrupo1(acorde, semitons, preferirBemol)}/${transporGrupo1(baixo, semitons, preferirBemol)}`;
+    return `${transporGrupo1(acorde, semitons, acidente)}/${transporGrupo1(baixo, semitons, acidente)}`;
   }
 
   const match = cifra.match(/^([A-G][#b]?)(.*)$/);
@@ -72,27 +105,35 @@ function transporGrupo1(cifra: string, semitons: number, preferirBemol: boolean)
   if (valor === undefined) return cifra;
 
   const novoValor = (valor + semitons + 120) % 12;
-  const usarBemol = preferirBemol || raiz.includes("b") || semitons === 2 || semitons === 9;
+  // A grafia vem do tom de destino; só em "auto" (tom de Dó) respeitamos a grafia original
+  const usarBemol = acidente === "bemol" || (acidente === "auto" && raiz.includes("b"));
   const novaRaiz = usarBemol ? TABELA_BEMOIS[novoValor] : TABELA_SUSTENIDOS[novoValor];
 
   return `${novaRaiz}${sufixo}`;
 }
 
-// Processador de Linha baseado na separação de Grupos para QUALQUER ficheiro
+// Garante que o tom detectado exista no seletor (ex.: G# vira Ab)
+function normalizarTom(raiz: string): string {
+  if (TONS_DISPONIVEIS.includes(raiz)) return raiz;
+  const valor = NOTAS_SEMITONS[raiz];
+  return valor === undefined ? "C" : TABELA_TONS_PADRAO[valor];
+}
+
+// Processador de linha baseado na separação de grupos para QUALQUER arquivo
 function renderizarLinhaPorGrupos(
   linha: string,
   semitons: number,
-  preferirBemol: boolean,
-  modoVisualizacao: "completo" | "grupo1" | "grupo2"
+  acidente: Acidente,
+  modo: ModoVisualizacao
 ) {
   // 1. Linha indicativa de Tom
   if (/^tom\s*:/i.test(linha)) {
     const partes = linha.split(/:\s*/);
     const tomOriginal = partes[1]?.trim() || "";
-    const tomFinal = semitons === 0 ? tomOriginal : transporGrupo1(tomOriginal, semitons, preferirBemol);
+    const tomFinal = semitons === 0 ? tomOriginal : transporGrupo1(tomOriginal, semitons, acidente);
 
-    if (modoVisualizacao === "grupo2") return <span className="font-bold text-gray-900">{partes[0]}:</span>;
-    if (modoVisualizacao === "grupo1") return <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>;
+    if (modo === "grupo2") return <span className="font-bold text-gray-900">{partes[0]}:</span>;
+    if (modo === "grupo1") return <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>;
     return (
       <span className="font-bold text-gray-900">
         {partes[0]}: <span className="text-[#FF5500] font-mono text-base font-bold">{tomFinal}</span>
@@ -102,37 +143,63 @@ function renderizarLinhaPorGrupos(
 
   // 2. Linha indicativa de Afinação
   if (/^afina[cç][aã]o\s*:/i.test(linha)) {
-    if (modoVisualizacao === "grupo1") return <span className="text-transparent"> </span>;
+    if (modo === "grupo1") return <span className="text-transparent"> </span>;
     return <span className="font-bold text-gray-900">{linha}</span>;
   }
 
   // 3. Linhas de Tablatura ASCII (Grupo 2 - Intocáveis)
   if (/^[EBGDAE]\s*\|/i.test(linha) || /\|[-0-9\s/\\hpbr~|]+\|/.test(linha)) {
-    if (modoVisualizacao === "grupo1") return <span className="text-transparent"> </span>;
+    if (modo === "grupo1") return <span className="text-transparent"> </span>;
     return <span className="text-gray-900 font-mono select-text">{linha}</span>;
   }
 
-  // 4. Demais linhas contendo cifras e texto do arquivo carregado
-  const tokens = linha.split(/(\s+|\[|\]|\(|\))/);
+  // 4. Demais linhas: cifras (linha só de cifras ou cifras entre colchetes) e texto
+  const linhaDeCifras = ehLinhaDeCifras(linha);
+  const tokens = linha.split(/(\s+|\[|\]|\(|\))/).filter((t) => t !== "");
+
+  let dentroDeColchete = false;
+  // Diferença de tamanho acumulada pelas cifras transpostas (ex.: A -> Bb = +1),
+  // compensada nos espaços seguintes para manter o alinhamento com a letra.
+  let pendente = 0;
 
   return (
     <span>
       {tokens.map((token, i) => {
-        const limpo = token.trim();
-        const ehGrupo1 = limpo && REGEX_GRUPO1_CIFRA.test(limpo);
+        if (token === "[") dentroDeColchete = true;
+        else if (token === "]") dentroDeColchete = false;
 
-        if (ehGrupo1) {
-          if (modoVisualizacao === "grupo2") return <span key={i} className="opacity-0">{" ".repeat(limpo.length)}</span>;
-          const transposta = semitons === 0 ? limpo : transporGrupo1(limpo, semitons, preferirBemol);
+        // Espaços: preservados, com compensação de alinhamento em linhas de cifras
+        if (/^\s+$/.test(token)) {
+          if (!linhaDeCifras || pendente === 0) return <span key={i}>{token}</span>;
+          let tamanho = token.length;
+          if (pendente > 0) {
+            const corte = Math.min(pendente, tamanho - 1);
+            tamanho -= corte;
+            pendente -= corte;
+          } else {
+            tamanho += -pendente;
+            pendente = 0;
+          }
+          return <span key={i}>{" ".repeat(tamanho)}</span>;
+        }
+
+        const ehCifra = REGEX_GRUPO1_CIFRA.test(token) && (linhaDeCifras || dentroDeColchete);
+
+        if (ehCifra) {
+          if (modo === "grupo2") {
+            return <span key={i} className="opacity-0">{" ".repeat(token.length)}</span>;
+          }
+          const transposta = semitons === 0 ? token : transporGrupo1(token, semitons, acidente);
+          if (linhaDeCifras) pendente += transposta.length - token.length;
           return (
             <span key={i} className="text-[#FF5500] font-bold font-mono">
               {transposta}
             </span>
           );
-        } else {
-          if (modoVisualizacao === "grupo1") return <span key={i}> </span>;
-          return <span key={i}>{token}</span>;
         }
+
+        if (modo === "grupo1") return <span key={i}>{" ".repeat(token.length)}</span>;
+        return <span key={i}>{token}</span>;
       })}
     </span>
   );
@@ -147,7 +214,7 @@ function TranspositorDinamicoReal() {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [isEditing, setIsEditing] = useState<boolean>(false);
 
-  const [modoVisualizacao, setModoVisualizacao] = useState<"completo" | "grupo1" | "grupo2">("completo");
+  const [modoVisualizacao, setModoVisualizacao] = useState<ModoVisualizacao>("completo");
 
   const [tomReconhecido, setTomReconhecido] = useState<string>("C");
   const [tomDesejado, setTomDesejado] = useState<string>("C");
@@ -161,29 +228,33 @@ function TranspositorDinamicoReal() {
   };
 
   const deltaSemitons = calcularSemitons();
-  const preferirBemol = tomDesejado.includes("b") || instrumentoId === "Eb" || instrumentoId === "Bb";
+  const acidente = acidenteDoTom(tomDesejado);
 
   // Identifica dinamicamente o tom dentro do texto do novo arquivo enviado
   const detectarTomNoTexto = (conteudo: string): string => {
-    const match = conteudo.match(/(?:tom|key)\s*:\s*([A-G][#b]?)/i);
+    // 1. Linha explícita "Tom: X" / "Key: X"
+    const match = conteudo.match(/(?:tom|key)\s*:\s*([A-Ga-g][#b]?)/i);
     if (match && match[1]) {
-      const achado = match[1].toUpperCase();
-      if (NOTAS_SEMITONS[achado] !== undefined) return achado;
+      // Só a primeira letra em maiúscula, para não transformar "Eb" em "EB"
+      const raiz = match[1][0].toUpperCase() + match[1].slice(1).toLowerCase();
+      if (NOTAS_SEMITONS[raiz] !== undefined) return normalizarTom(raiz);
     }
 
-    const palavras = conteudo.split(/\s+/);
-    for (const pal of palavras) {
-      const limpo = pal.replace(/[\[\](),]/g, "");
-      if (REGEX_GRUPO1_CIFRA.test(limpo)) {
-        const raiz = limpo.match(/^([A-G][#b]?)/)?.[1];
-        if (raiz && NOTAS_SEMITONS[raiz] !== undefined) return raiz;
-      }
+    // 2. Primeira cifra de uma linha que seja realmente só de cifras
+    for (const linha of conteudo.split("\n")) {
+      if (!ehLinhaDeCifras(linha)) continue;
+      const primeira = linha
+        .split(/\s+/)
+        .map(limparToken)
+        .find((t) => REGEX_GRUPO1_CIFRA.test(t));
+      const raiz = primeira?.match(/^([A-G][#b]?)/)?.[1];
+      if (raiz && NOTAS_SEMITONS[raiz] !== undefined) return normalizarTom(raiz);
     }
 
     return "C";
   };
 
-  const processarTextoCarregado = (textoLido: string) => {
+  const processarTextoCarregado = (textoLido: string, opcoes?: { silencioso?: boolean }) => {
     setDocumentoTexto(textoLido);
     const tomAuto = detectarTomNoTexto(textoLido);
     setTomReconhecido(tomAuto);
@@ -191,16 +262,21 @@ function TranspositorDinamicoReal() {
     setInstrumentoId("original");
     setHasFile(true);
     setIsProcessing(false);
-    toast.success("Novo arquivo processado com sucesso!", {
-      description: `Tom detectado: ${tomAuto}. Exibindo o conteúdo real carregado.`,
-    });
+    if (!opcoes?.silencioso) {
+      toast.success("Novo arquivo processado com sucesso!", {
+        description: `Tom detectado: ${tomAuto}. Exibindo o conteúdo real carregado.`,
+      });
+    }
   };
 
-  // Leitor OCR universal de imagens usando Tesseract.js no navegador
+  // Leitor OCR de imagens usando Tesseract.js no navegador.
+  // OBS.: hoje o script e o idioma "por" vêm de CDN (não funciona offline).
+  // Para uso offline, instale `tesseract.js` via npm e hospede os arquivos de idioma localmente.
   const extrairTextoDeImagem = async (file: File) => {
     setIsProcessing(true);
-    setStatusMessage("A analisar a imagem enviada...");
+    setStatusMessage("Analisando a imagem enviada...");
 
+    let worker: any = null;
     try {
       if (!(window as any).Tesseract) {
         await new Promise((resolve, reject) => {
@@ -214,11 +290,15 @@ function TranspositorDinamicoReal() {
       }
 
       const Tesseract = (window as any).Tesseract;
-      setStatusMessage("Reconhecendo texto e cifras da nova imagem...");
+      setStatusMessage("Reconhecendo texto e cifras da imagem...");
 
-      const worker = await Tesseract.createWorker("por");
+      worker = await Tesseract.createWorker("por");
+      // Mantém espaços múltiplos (alinhamento das cifras) e lê o bloco como texto uniforme
+      await worker.setParameters({
+        preserve_interword_spaces: "1",
+        tessedit_pageseg_mode: "6",
+      });
       const ret = await worker.recognize(file);
-      await worker.terminate();
 
       const resultadoOCR = ret.data.text.trim();
       if (resultadoOCR.length > 5) {
@@ -228,12 +308,21 @@ function TranspositorDinamicoReal() {
       }
     } catch (err) {
       console.warn("Aviso no OCR da imagem:", err);
-      // Se a imagem estiver muito escura ou sem foco, abre o editor para colar ou digitar o texto real da foto
+      // Imagem escura, sem foco ou sem internet: abre o editor para colar ou digitar o texto
       setIsEditing(true);
       processarTextoCarregado(
-        `[Arquivo: ${file.name}]\nTom: C\nAfinação: E A D G B E\n\n(Insira ou cole o conteúdo da sua cifra aqui...)`
+        `[Arquivo: ${file.name}]\nTom: C\nAfinação: E A D G B E\n\n(Insira ou cole o conteúdo da sua cifra aqui...)`,
+        { silencioso: true }
       );
-      toast.info("Ajuste o texto na caixa de edição caso necessário.");
+      toast.info("Não foi possível ler a imagem. Digite ou cole o texto na caixa de edição.");
+    } finally {
+      if (worker) {
+        try {
+          await worker.terminate();
+        } catch {
+          /* ignora erro ao encerrar o worker */
+        }
+      }
     }
   };
 
@@ -241,11 +330,26 @@ function TranspositorDinamicoReal() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.type.includes("text") || file.name.endsWith(".txt") || file.name.endsWith(".cifra") || file.name.endsWith(".md")) {
+    const nome = file.name.toLowerCase();
+
+    // PDF ainda não é suportado (o Tesseract só lê imagens)
+    if (file.type === "application/pdf" || nome.endsWith(".pdf")) {
+      toast.error("PDF ainda não é suportado.", {
+        description: "Envie uma foto ou captura de tela, ou um arquivo de texto (.txt, .cifra, .md).",
+      });
+      e.target.value = "";
+      return;
+    }
+
+    if (file.type.includes("text") || nome.endsWith(".txt") || nome.endsWith(".cifra") || nome.endsWith(".md")) {
       setIsProcessing(true);
       setStatusMessage("Lendo arquivo...");
       const reader = new FileReader();
       reader.onload = (event) => processarTextoCarregado(event.target?.result as string);
+      reader.onerror = () => {
+        setIsProcessing(false);
+        toast.error("Não foi possível ler o arquivo.");
+      };
       reader.readAsText(file);
     } else {
       extrairTextoDeImagem(file);
@@ -264,10 +368,9 @@ function TranspositorDinamicoReal() {
     const inst = INSTRUMENTOS_PRESET.find((i) => i.id === id);
     if (!inst) return;
 
-    const valOrig = NOTAS_SEMITONS[tomReconhecido] || 0;
+    const valOrig = NOTAS_SEMITONS[tomReconhecido] ?? 0;
     const novoVal = (valOrig + inst.semitons) % 12;
-    const usarBemol = id === "Eb" || id === "Bb";
-    const novoTom = usarBemol ? TABELA_BEMOIS[novoVal] : TABELA_SUSTENIDOS[novoVal];
+    const novoTom = TABELA_TONS_PADRAO[novoVal];
 
     setTomDesejado(novoTom);
     toast.success(`Transposto para ${inst.nome} (Tom: ${novoTom})`);
@@ -290,7 +393,7 @@ function TranspositorDinamicoReal() {
               Scanner Dinâmico Universal
             </h1>
             <p className="text-[10px] text-gray-400 font-mono">
-              Reconhece e processa qualquer ficheiro enviado
+              Reconhece e processa qualquer arquivo enviado
             </p>
           </div>
         </div>
@@ -316,7 +419,7 @@ function TranspositorDinamicoReal() {
             <button
               onClick={() => setHasFile(false)}
               className="text-gray-400 hover:text-white p-1.5 rounded-lg border border-gray-800 text-xs"
-              title="Carregar outro ficheiro"
+              title="Carregar outro arquivo"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -331,9 +434,9 @@ function TranspositorDinamicoReal() {
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30">
               <Layers className="w-8 h-8" />
             </div>
-            <h2 className="text-base font-bold text-white">Carregar Nova Cifra ou Ficheiro</h2>
+            <h2 className="text-base font-bold text-white">Carregar Nova Cifra ou Arquivo</h2>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-              Envie qualquer fotografia ou documento. O sistema lerá o conteúdo real do ficheiro enviado, sem utilizar modelos anteriores.
+              Envie uma fotografia ou um arquivo de texto. O sistema lê o conteúdo real do arquivo enviado.
             </p>
 
             <div className="flex gap-2 w-full max-w-xs pt-2">
@@ -352,11 +455,11 @@ function TranspositorDinamicoReal() {
 
               <label className="flex-1 cursor-pointer">
                 <span className="inline-flex w-full items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-gray-700 transition">
-                  <Upload className="w-4 h-4 text-gray-400" /> Ficheiro
+                  <Upload className="w-4 h-4 text-gray-400" /> Arquivo
                 </span>
                 <input
                   type="file"
-                  accept="image/*,.txt,.cifra,.pdf,.md"
+                  accept="image/*,.txt,.cifra,.md"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -492,22 +595,22 @@ function TranspositorDinamicoReal() {
 
             {/* Editor de Texto Dinâmico */}
             {isEditing && (
-              <div className="bg-[#0F121A] p-3 rounded-xl border border-gray-700 space-y-2">
+              <div className="bg-[#0F121A] p-3 rounded-xl border border-gray-700 space-y-2 print:hidden">
                 <span className="text-xs font-bold text-amber-400">Texto Extraído do Novo Arquivo:</span>
                 <textarea
                   value={documentoTexto}
                   onChange={(e) => setDocumentoTexto(e.target.value)}
-                  className="w-full h-44 bg-[#080A0F] border border-gray-800 rounded-lg p-2.5 font-mono text-xs text-gray-200 outline-none"
+                  className="w-full h-44 bg-[#080A0F] border border-gray-800 rounded-lg p-2.5 font-mono text-xs text-gray-200 outline-none select-text"
                 />
               </div>
             )}
 
             {/* DOCUMENTO FINAL RENDERIZADO */}
-            <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans print:shadow-none print:border-none print:p-0">
+            <div className="bg-white text-black p-8 sm:p-12 rounded-xl shadow-2xl border border-gray-300 font-sans select-text print:shadow-none print:border-none print:p-0">
               <div className="space-y-1 font-mono text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">
                 {documentoTexto.split("\n").map((linha, index) => (
                   <div key={index} className="min-h-[1.2rem]">
-                    {renderizarLinhaPorGrupos(linha, deltaSemitons, preferirBemol, modoVisualizacao)}
+                    {renderizarLinhaPorGrupos(linha, deltaSemitons, acidente, modoVisualizacao)}
                   </div>
                 ))}
               </div>
